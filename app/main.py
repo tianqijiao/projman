@@ -3,6 +3,7 @@ from io import BytesIO
 import os
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
@@ -16,13 +17,18 @@ from app.domain import AttachmentKind
 from app.exporters import build_projects_excel
 from app.models import Attachment, Project
 from app.services import (
+    STATUS_FILTER_OPTIONS,
     create_project,
     dashboard_summary,
+    filter_project_overviews,
+    format_money,
     get_int_setting,
     list_project_overviews,
+    normalize_status_filter,
     project_overview,
     save_attachment_bytes,
     set_int_setting,
+    summarize_project_overviews,
     update_project,
 )
 
@@ -150,19 +156,38 @@ def create_app(
         request: Request,
         session: Annotated[Session, Depends(get_session)],
         year: str | None = None,
+        q: str | None = None,
+        status: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
         selected_year = _parse_optional_year(year)
-        overviews = list_project_overviews(session, year=selected_year)
+        query = (q or "").strip()
+        selected_status = normalize_status_filter(status)
+        overviews = filter_project_overviews(
+            list_project_overviews(session, year=selected_year),
+            query=query,
+            status_filter=selected_status,
+        )
         return templates.TemplateResponse(
             request,
             "projects.html",
             {
                 "overviews": overviews,
                 "year": selected_year,
+                "query": query,
+                "status_filter": selected_status,
+                "status_filter_options": STATUS_FILTER_OPTIONS,
+                "ledger_summary": summarize_project_overviews(overviews),
+                "export_url": _build_project_url(
+                    "/projects/export",
+                    year=selected_year,
+                    q=query,
+                    status=selected_status,
+                ),
                 "years": _project_years(session),
                 "attachment_kinds": list(AttachmentKind),
+                "money": format_money,
             },
         )
 
@@ -171,11 +196,18 @@ def create_app(
         request: Request,
         session: Annotated[Session, Depends(get_session)],
         year: str | None = None,
+        q: str | None = None,
+        status: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
         selected_year = _parse_optional_year(year)
-        overviews = list_project_overviews(session, year=selected_year)
+        selected_status = normalize_status_filter(status)
+        overviews = filter_project_overviews(
+            list_project_overviews(session, year=selected_year),
+            query=q,
+            status_filter=selected_status,
+        )
         title = (
             f"{selected_year} 年度运维项目台账"
             if selected_year
@@ -446,6 +478,24 @@ def _parse_optional_year(value: str | None) -> int | None:
     if value is None or value.strip() == "":
         return None
     return int(value)
+
+
+def _build_project_url(
+    path: str,
+    *,
+    year: int | None,
+    q: str,
+    status: str,
+) -> str:
+    params: dict[str, str | int] = {}
+    if year:
+        params["year"] = year
+    if q:
+        params["q"] = q
+    if status:
+        params["status"] = status
+    query_string = urlencode(params)
+    return f"{path}?{query_string}" if query_string else path
 
 
 app = create_app(

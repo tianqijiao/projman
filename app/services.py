@@ -38,6 +38,24 @@ class DashboardSummary:
     projects: list[ProjectOverview]
 
 
+@dataclass(frozen=True)
+class ProjectLedgerSummary:
+    total_count: int
+    budget_total: float
+    contract_total: float
+    incomplete_count: int
+
+
+STATUS_FILTER_OPTIONS = [
+    ("", "全部状态"),
+    ("unsigned_contract", "未签合同"),
+    ("unaccepted", "未验收"),
+    ("unpaid", "未付款"),
+    ("incomplete", "资料不完整"),
+    ("completed", "已完成"),
+]
+
+
 def create_project(
     session: Session,
     *,
@@ -134,6 +152,44 @@ def list_project_overviews(session: Session, year: int | None = None) -> list[Pr
     return [project_overview(session, project) for project in session.exec(statement)]
 
 
+def filter_project_overviews(
+    overviews: list[ProjectOverview],
+    *,
+    query: str | None = None,
+    status_filter: str | None = None,
+) -> list[ProjectOverview]:
+    keyword = (query or "").strip().lower()
+    normalized_status = normalize_status_filter(status_filter)
+
+    return [
+        item
+        for item in overviews
+        if _matches_keyword(item, keyword)
+        and _matches_status_filter(item, normalized_status)
+    ]
+
+
+def summarize_project_overviews(overviews: list[ProjectOverview]) -> ProjectLedgerSummary:
+    return ProjectLedgerSummary(
+        total_count=len(overviews),
+        budget_total=sum(item.project.budget_amount or 0 for item in overviews),
+        contract_total=sum(item.project.contract_amount or 0 for item in overviews),
+        incomplete_count=sum(1 for item in overviews if item.status.missing_evidence),
+    )
+
+
+def normalize_status_filter(value: str | None) -> str:
+    allowed = {key for key, _label in STATUS_FILTER_OPTIONS}
+    status_filter = (value or "").strip()
+    return status_filter if status_filter in allowed else ""
+
+
+def format_money(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:,.2f}"
+
+
 def dashboard_summary(
     session: Session,
     *,
@@ -192,3 +248,30 @@ def _draft_from_project(project: Project) -> ProjectDraft:
         acceptance_date=project.acceptance_date,
         payment_date=project.payment_date,
     )
+
+
+def _matches_keyword(item: ProjectOverview, keyword: str) -> bool:
+    if not keyword:
+        return True
+    project = item.project
+    return keyword in project.name.lower() or keyword in project.notes.lower()
+
+
+def _matches_status_filter(item: ProjectOverview, status_filter: str) -> bool:
+    if status_filter == "unsigned_contract":
+        return not item.status.contract_signed
+    if status_filter == "unaccepted":
+        return not item.status.accepted
+    if status_filter == "unpaid":
+        return not item.status.paid
+    if status_filter == "incomplete":
+        return bool(item.status.missing_evidence)
+    if status_filter == "completed":
+        return (
+            item.status.established
+            and item.status.contract_signed
+            and item.status.accepted
+            and item.status.paid
+            and not item.status.missing_evidence
+        )
+    return True

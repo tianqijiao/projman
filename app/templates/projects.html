@@ -7,29 +7,48 @@
     <p>{% if year %}{{ year }} 年{% else %}全部年度{% endif %}</p>
   </div>
   <div class="toolbar-actions">
-    <form method="get" action="/projects" class="inline-filter">
-      <label>年度筛选</label>
-      <select name="year" onchange="this.form.submit()">
-        <option value="">全部年度</option>
-        {% for item_year in years %}
-        <option value="{{ item_year }}" {% if year == item_year %}selected{% endif %}>{{ item_year }} 年</option>
-        {% endfor %}
-      </select>
+    <form method="get" action="/projects" class="ledger-filters">
+      <label>年度筛选
+        <select name="year">
+          <option value="">全部年度</option>
+          {% for item_year in years %}
+          <option value="{{ item_year }}" {% if year == item_year %}selected{% endif %}>{{ item_year }} 年</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>关键词
+        <input name="q" value="{{ query }}" placeholder="项目名称 / 备注">
+      </label>
+      <label>状态筛选
+        <select name="status">
+          {% for option_value, option_label in status_filter_options %}
+          <option value="{{ option_value }}" {% if status_filter == option_value %}selected{% endif %}>{{ option_label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="ghost" type="submit">筛选</button>
+      <a class="button ghost-link" href="/projects">重置</a>
     </form>
-    <a class="button ghost-link" href="/projects/export{% if year %}?year={{ year }}{% endif %}">导出Excel</a>
+    <a class="button ghost-link" href="{{ export_url }}">导出Excel</a>
     <a class="button" href="/projects/new">新增项目</a>
   </div>
 </section>
 <section class="panel">
+  <div class="ledger-summary">
+    <div><span>{{ ledger_summary.total_count }}</span><label>当前项目</label></div>
+    <div><span>{{ money(ledger_summary.budget_total) }}</span><label>预算合计</label></div>
+    <div><span>{{ money(ledger_summary.contract_total) }}</span><label>合同合计</label></div>
+    <div><span>{{ ledger_summary.incomplete_count }}</span><label>待补资料</label></div>
+  </div>
   <table class="projects-table">
-    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同金额</th><th>合同期</th><th>状态</th><th>附件</th><th>全部附件</th></tr></thead>
+    <thead><tr><th>年度</th><th>项目</th><th class="money-head">预算(元)</th><th class="money-head">合同金额(元)</th><th>合同期</th><th>状态</th><th>附件</th><th>全部附件</th></tr></thead>
     <tbody>
       {% for item in overviews %}
       <tr>
         <td>{{ item.project.year }}</td>
         <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
-        <td>{{ item.project.budget_amount or "-" }}</td>
-        <td>{{ item.project.contract_amount or "-" }}</td>
+        <td class="money-cell {% if item.project.budget_amount is none %}empty-value{% endif %}">{{ money(item.project.budget_amount) }}</td>
+        <td class="money-cell {% if item.project.contract_amount is none %}empty-value{% endif %}">{{ money(item.project.contract_amount) }}</td>
         <td>
           {% if item.project.contract_start and item.project.contract_end %}
           <span class="contract-period"><span>{{ item.project.contract_start }} 至</span><span>{{ item.project.contract_end }}</span></span>
@@ -65,6 +84,10 @@
           <span class="button compact-button disabled">暂无附件</span>
           {% endif %}
         </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="empty-row">没有找到符合条件的项目。</td>
       </tr>
       {% endfor %}
     </tbody>

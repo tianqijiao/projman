@@ -2,6 +2,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from app.main import create_app
 
@@ -230,6 +231,126 @@ def test_project_list_treats_empty_year_filter_as_all_years(tmp_path):
     assert "2028 年项目" in response.text
 
 
+def test_project_list_search_status_filter_summary_and_money_format(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={
+            "year": "2027",
+            "name": "网络安全维保",
+            "budget_amount": "12345",
+            "notes": "堡垒机年度服务",
+        },
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "付款完成项目", "budget_amount": "1000"},
+    )
+    client.post(
+        "/projects/2/edit",
+        data={
+            "year": "2027",
+            "name": "付款完成项目",
+            "budget_amount": "1000",
+            "contract_amount": "900",
+            "contract_start": "2027-01-01",
+            "contract_end": "2027-12-31",
+            "acceptance_date": "2027-12-31",
+            "payment_date": "2028-01-15",
+            "notes": "",
+        },
+    )
+    for kind, filename in [
+        ("signed_contract", "盖章合同.pdf"),
+        ("acceptance", "验收单.pdf"),
+        ("invoice", "发票.pdf"),
+    ]:
+        client.post(
+            "/projects/2/attachments",
+            data={"kind": kind},
+            files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
+        )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "未签合同项目", "budget_amount": "500"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "待验收项目", "budget_amount": "600"},
+    )
+    client.post(
+        "/projects/4/edit",
+        data={
+            "year": "2027",
+            "name": "待验收项目",
+            "budget_amount": "600",
+            "contract_amount": "580",
+            "contract_start": "2027-02-01",
+            "contract_end": "2027-12-31",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "",
+        },
+    )
+    client.post(
+        "/projects/4/attachments",
+        data={"kind": "signed_contract"},
+        files={"file": ("待验收盖章合同.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "待付款项目", "budget_amount": "700"},
+    )
+    client.post(
+        "/projects/5/edit",
+        data={
+            "year": "2027",
+            "name": "待付款项目",
+            "budget_amount": "700",
+            "contract_amount": "680",
+            "contract_start": "2027-03-01",
+            "contract_end": "2027-12-31",
+            "acceptance_date": "2027-12-31",
+            "payment_date": "",
+            "notes": "",
+        },
+    )
+    for kind, filename in [
+        ("signed_contract", "待付款盖章合同.pdf"),
+        ("acceptance", "待付款验收单.pdf"),
+    ]:
+        client.post(
+            "/projects/5/attachments",
+            data={"kind": kind},
+            files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
+        )
+
+    response = client.get("/projects?q=堡垒机&status=incomplete")
+    completed_response = client.get("/projects?status=completed")
+    unsigned_response = client.get("/projects?q=未签&status=unsigned_contract")
+    unaccepted_response = client.get("/projects?q=待验收&status=unaccepted")
+    unpaid_response = client.get("/projects?q=待付款&status=unpaid")
+
+    assert response.status_code == 200
+    assert 'name="q"' in response.text
+    assert 'value="堡垒机"' in response.text
+    assert '<option value="incomplete" selected>资料不完整</option>' in response.text
+    assert 'href="/projects/export?q=' in response.text
+    assert "status=incomplete" in response.text
+    assert "网络安全维保" in response.text
+    assert "付款完成项目" not in response.text
+    assert "当前项目" in response.text
+    assert "预算合计" in response.text
+    assert "12,345.00" in response.text
+    assert "待补资料" in response.text
+    assert "付款完成项目" in completed_response.text
+    assert "网络安全维保" not in completed_response.text
+    assert "未签合同项目" in unsigned_response.text
+    assert "待验收项目" in unaccepted_response.text
+    assert "待付款项目" in unpaid_response.text
+
+
 def test_project_list_exports_filtered_year_to_excel(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -265,6 +386,45 @@ def test_project_list_exports_filtered_year_to_excel(tmp_path):
         )
     assert "2027 年项目" in workbook_xml
     assert "2028 年项目" not in workbook_xml
+
+
+def test_project_excel_export_uses_search_and_status_filters(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={
+            "year": "2027",
+            "name": "堡垒机维保",
+            "budget_amount": "12345",
+            "notes": "网络安全",
+        },
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "机房巡检", "budget_amount": "200"},
+    )
+
+    export_response = client.get("/projects/export?year=2027&q=网络&status=incomplete")
+
+    assert export_response.status_code == 200
+    workbook_path = tmp_path / "export.xlsx"
+    workbook_path.write_bytes(export_response.content)
+    with ZipFile(workbook_path) as workbook_zip:
+        workbook_xml = "\n".join(
+            workbook_zip.read(name).decode("utf-8", errors="ignore")
+            for name in workbook_zip.namelist()
+            if name.startswith("xl/")
+            and name.endswith(".xml")
+            and ("worksheet" in name or "sharedStrings" in name)
+        )
+    assert "堡垒机维保" in workbook_xml
+    assert "机房巡检" not in workbook_xml
+    workbook = load_workbook(workbook_path)
+    sheet = workbook.active
+    assert sheet["C3"].value == 12345
+    assert sheet["C3"].number_format == "#,##0.00"
+    assert sheet["D3"].number_format == "#,##0.00"
 
 
 def test_project_excel_export_omits_attachment_columns(tmp_path):

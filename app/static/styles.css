@@ -241,7 +241,7 @@ table {
 }
 th, td {
   text-align: left;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
   padding: 6px 8px;
   vertical-align: middle;
 }
@@ -250,11 +250,17 @@ th {
   background: #f7f8f5;
   font-size: 12px;
   font-weight: 700;
+}
+thead tr {
   border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+tbody tr {
+  border-bottom: 1px solid var(--line);
 }
 td { color: var(--ink); }
 tbody tr:hover { background: #fbfcf8; }
-tr:last-child td { border-bottom: 0; }
+tbody tr:last-child { border-bottom: 0; }
 .projects-table th:nth-child(1),
 .projects-table td:nth-child(1) { width: 58px; }
 .projects-table th:nth-child(2),
@@ -274,12 +280,14 @@ tr:last-child td { border-bottom: 0; }
 .projects-table td:nth-child(7) { width: 382px; }
 .projects-table th:nth-child(8),
 .projects-table td:nth-child(8) { width: 100px; }
-.projects-table td:nth-child(6) {
+
+.status-grid {
   display: grid;
   grid-template-columns: repeat(2, max-content);
   gap: 4px;
   align-content: center;
 }
+.panel-head .status-grid { justify-content: end; }
 
 .pill {
   display: inline-flex;
@@ -296,7 +304,7 @@ tr:last-child td { border-bottom: 0; }
   margin: 2px 3px 2px 0;
   white-space: nowrap;
 }
-.projects-table .pill { min-width: 72px; }
+.projects-table .status-grid .pill { min-width: 72px; }
 .pill.ok {
   background: var(--green-soft);
   border-color: #cbdcce;

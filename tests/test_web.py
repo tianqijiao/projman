@@ -47,6 +47,18 @@ def test_project_list_is_first_navigation_item(tmp_path):
     )
 
 
+def test_new_project_is_not_in_top_navigation_but_kept_in_toolbar(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.get("/projects")
+
+    assert response.status_code == 200
+    header_html = response.text.split("</header>", maxsplit=1)[0]
+    assert 'href="/projects/new">新增项目' not in header_html
+    assert 'href="/projects/new">新增项目' in response.text
+
+
 def test_login_create_project_and_show_it_on_dashboard(tmp_path):
     client = make_client(tmp_path)
     login(client)

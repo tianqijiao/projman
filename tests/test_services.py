@@ -177,6 +177,66 @@ def test_sync_annual_executions_expands_cross_year_project_and_preserves_manual_
         assert refreshed[2].contract_amount == 95000
 
 
+def test_sync_annual_executions_does_not_create_post_contract_management_year(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2028,
+            name="先前误标合同管理年的项目",
+            budget_amount=120000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=120000,
+            contract_start=date(2026, 5, 22),
+            contract_end=date(2027, 5, 21),
+        )
+        stale = AnnualExecution(
+            project_id=project.id,
+            year=2028,
+            contract_only=True,
+            manual_amounts=False,
+        )
+        session.add(stale)
+        session.commit()
+
+        executions = sync_annual_executions(session, project)
+
+        assert [(item.year, item.contract_only) for item in executions] == [
+            (2026, False),
+            (2027, False),
+        ]
+        assert session.get(AnnualExecution, stale.id) is None
+
+
+def test_cross_year_contract_first_service_year_is_payable_execution_year(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2026,
+            name="三年服务项目",
+            budget_amount=300000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=270000,
+            contract_start=date(2026, 1, 1),
+            contract_end=date(2028, 12, 31),
+        )
+
+        executions = sync_annual_executions(session, project)
+
+        assert [(item.year, item.contract_only) for item in executions] == [
+            (2026, False),
+            (2027, False),
+            (2028, False),
+        ]
+        assert [item.budget_amount for item in executions] == [100000, 100000, 100000]
+        assert [item.contract_amount for item in executions] == [90000, 90000, 90000]
+
+
 def test_annual_status_uses_year_specific_acceptance_and_payment(engine, tmp_path):
     with Session(engine) as session:
         project = create_project(

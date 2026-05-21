@@ -179,8 +179,18 @@ def sync_annual_executions(session: Session, project: Project) -> list[AnnualExe
             select(AnnualExecution).where(AnnualExecution.project_id == project.id)
         )
     }
+    stale_executions = [
+        execution
+        for year, execution in existing.items()
+        if year not in target_years
+        and execution.contract_only
+        and not execution.manual_amounts
+    ]
+    for execution in stale_executions:
+        session.delete(execution)
+
     normal_count = max(len(target_years & normal_years), 1)
-    changed = False
+    changed = bool(stale_executions)
 
     for year in sorted(target_years):
         contract_only = year not in normal_years
@@ -549,8 +559,12 @@ def _overview_contract_amount(item: ProjectOverview | AnnualProjectOverview) -> 
 
 
 def _execution_years(project: Project) -> set[int]:
-    years = {project.year}
-    years.update(_contract_service_years(project))
+    service_years = _contract_service_years(project)
+    if not service_years:
+        return {project.year}
+    years = set(service_years)
+    if project.year < min(service_years):
+        years.add(project.year)
     return years
 
 

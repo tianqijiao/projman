@@ -149,17 +149,18 @@ def create_app(
     def projects(
         request: Request,
         session: Annotated[Session, Depends(get_session)],
-        year: int | None = None,
+        year: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
-        overviews = list_project_overviews(session, year=year)
+        selected_year = _parse_optional_year(year)
+        overviews = list_project_overviews(session, year=selected_year)
         return templates.TemplateResponse(
             request,
             "projects.html",
             {
                 "overviews": overviews,
-                "year": year,
+                "year": selected_year,
                 "years": _project_years(session),
                 "attachment_kinds": list(AttachmentKind),
             },
@@ -169,13 +170,18 @@ def create_app(
     def export_projects(
         request: Request,
         session: Annotated[Session, Depends(get_session)],
-        year: int | None = None,
+        year: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
-        overviews = list_project_overviews(session, year=year)
-        title = f"{year} 年度运维项目台账" if year else "全部年度运维项目台账"
-        filename = f"projects-{year}.xlsx" if year else "projects-all.xlsx"
+        selected_year = _parse_optional_year(year)
+        overviews = list_project_overviews(session, year=selected_year)
+        title = (
+            f"{selected_year} 年度运维项目台账"
+            if selected_year
+            else "全部年度运维项目台账"
+        )
+        filename = f"projects-{selected_year}.xlsx" if selected_year else "projects-all.xlsx"
         content = build_projects_excel(overviews, title)
         return Response(
             content,
@@ -434,6 +440,12 @@ def _parse_date(value: str) -> date | None:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def _parse_optional_year(value: str | None) -> int | None:
+    if value is None or value.strip() == "":
+        return None
+    return int(value)
 
 
 app = create_app(

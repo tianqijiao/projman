@@ -210,6 +210,26 @@ def test_project_list_can_filter_by_year(tmp_path):
     assert '<option value="2027" selected>2027 年</option>' in filtered_response.text
 
 
+def test_project_list_treats_empty_year_filter_as_all_years(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "2027 年项目", "budget_amount": "100"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2028", "name": "2028 年项目", "budget_amount": "200"},
+    )
+
+    response = client.get("/projects?year=")
+
+    assert response.status_code == 200
+    assert "全部年度" in response.text
+    assert "2027 年项目" in response.text
+    assert "2028 年项目" in response.text
+
+
 def test_project_list_exports_filtered_year_to_excel(tmp_path):
     client = make_client(tmp_path)
     login(client)

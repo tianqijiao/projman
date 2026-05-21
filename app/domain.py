@@ -64,17 +64,21 @@ def compute_project_status(
         and project.contract_end
         and has_signed_contract
     )
-    accepted = bool(
-        project.acceptance_date or AttachmentKind.ACCEPTANCE in evidence
-    )
-    paid = bool(project.payment_date or AttachmentKind.INVOICE in evidence)
+    has_acceptance = AttachmentKind.ACCEPTANCE in evidence
+    has_invoice = AttachmentKind.INVOICE in evidence
+    accepted = bool(project.acceptance_date and has_acceptance)
+    paid = bool(project.payment_date and has_invoice)
 
     missing: list[str] = []
     if not has_signed_contract:
         missing.append(AttachmentKind.SIGNED_CONTRACT.label)
-    if not accepted:
+    if not project.acceptance_date:
+        missing.append("验收日期")
+    if not has_acceptance:
         missing.append(AttachmentKind.ACCEPTANCE.label)
-    if AttachmentKind.INVOICE not in evidence:
+    if not project.payment_date:
+        missing.append("付款日期")
+    if not has_invoice:
         missing.append(AttachmentKind.INVOICE.label)
 
     return ProjectStatus(

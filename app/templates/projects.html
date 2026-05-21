@@ -37,7 +37,7 @@
             {% for kind in attachment_kinds %}
             {% set files = item.attachments | selectattr("kind", "equalto", kind) | list %}
             <details class="attachment-type">
-              <summary>{{ kind.label }}{% if files %}<span>{{ files | length }}</span>{% endif %}</summary>
+              <summary>{{ kind.label }}<span class="{% if not files %}empty-count{% endif %}">{% if files %}{{ files | length }}{% endif %}</span></summary>
               {% if files %}
               <ul>
                 {% for attachment in files %}

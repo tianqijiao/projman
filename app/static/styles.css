@@ -133,7 +133,7 @@ table { width: 100%; border-collapse: collapse; }
 th, td {
   text-align: left;
   border-bottom: 1px solid var(--line);
-  padding: 12px 10px;
+  padding: 8px 10px;
   vertical-align: middle;
 }
 th { color: var(--muted); font-size: 13px; font-weight: 600; }
@@ -161,7 +161,7 @@ tr:last-child td { border-bottom: 0; }
 .pill {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
   background: #eef1f5;
@@ -208,7 +208,7 @@ tr:last-child td { border-bottom: 0; }
 .attachment-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(125px, 1fr));
-  gap: 8px;
+  gap: 6px;
   min-width: 400px;
 }
 .attachment-type {
@@ -222,16 +222,16 @@ tr:last-child td { border-bottom: 0; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 30px;
-  padding: 5px 8px;
+  min-height: 26px;
+  padding: 3px 8px;
   cursor: pointer;
   color: #344054;
   font-size: 12px;
   font-weight: 600;
 }
 .attachment-type summary span {
-  min-width: 20px;
-  height: 20px;
+  min-width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -259,7 +259,7 @@ tr:last-child td { border-bottom: 0; }
   font-size: 12px;
 }
 .compact-button {
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 10px;
   white-space: nowrap;
 }

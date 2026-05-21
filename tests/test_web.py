@@ -141,6 +141,7 @@ def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
     assert 'href="/attachments/1/preview"' in response.text
     assert 'href="/attachments/1/download"' in response.text
     assert 'href="/projects/1/attachments/download-all"' in response.text
+    assert '<details class="attachment-type" open>' not in response.text
 
 
 def test_attachment_preview_download_and_download_all(tmp_path):

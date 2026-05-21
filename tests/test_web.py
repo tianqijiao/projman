@@ -83,3 +83,34 @@ def test_edit_project_and_upload_pdf_attachment(tmp_path):
     assert upload_response.status_code == 200
     assert "合同已签" in upload_response.text
     assert "合同.pdf" in upload_response.text
+
+
+def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "行政电脑维护服务", "budget_amount": "50000"},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "signed_contract"},
+        files={"file": ("盖章合同.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "invoice"},
+        files={"file": ("发票.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+
+    response = client.get("/projects")
+
+    assert response.status_code == 200
+    assert "采购依据" in response.text
+    assert "合同审签 PDF" in response.text
+    assert "盖章合同扫描件" in response.text
+    assert "验收单" in response.text
+    assert "发票" in response.text
+    assert "盖章合同.pdf" in response.text
+    assert "发票.pdf" in response.text
+    assert 'href="/attachments/' in response.text

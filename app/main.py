@@ -157,6 +157,7 @@ def create_app(
             {
                 "overviews": overviews,
                 "year": year,
+                "attachment_kinds": list(AttachmentKind),
             },
         )
 

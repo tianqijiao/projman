@@ -9,8 +9,8 @@
   <a class="button" href="/projects/new">新增项目</a>
 </section>
 <section class="panel">
-  <table>
-    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同</th><th>合同期</th><th>状态</th></tr></thead>
+  <table class="projects-table">
+    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同</th><th>合同期</th><th>状态</th><th>附件</th></tr></thead>
     <tbody>
       {% for item in overviews %}
       <tr>
@@ -20,6 +20,25 @@
         <td>{{ item.project.contract_amount or "-" }}</td>
         <td>{% if item.project.contract_start and item.project.contract_end %}{{ item.project.contract_start }} 至 {{ item.project.contract_end }}{% else %}-{% endif %}</td>
         <td>{% include "_status.html" %}</td>
+        <td>
+          <div class="attachment-summary">
+            {% for kind in attachment_kinds %}
+            {% set files = item.attachments | selectattr("kind", "equalto", kind) | list %}
+            <details class="attachment-type" {% if files %}open{% endif %}>
+              <summary>{{ kind.label }}{% if files %}<span>{{ files | length }}</span>{% endif %}</summary>
+              {% if files %}
+              <ul>
+                {% for attachment in files %}
+                <li><a href="/attachments/{{ attachment.id }}">{{ attachment.original_filename }}</a></li>
+                {% endfor %}
+              </ul>
+              {% else %}
+              <p>暂无</p>
+              {% endif %}
+            </details>
+            {% endfor %}
+          </div>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

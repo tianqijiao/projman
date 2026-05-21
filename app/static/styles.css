@@ -261,6 +261,7 @@ tr:last-child td { border-bottom: 0; }
 .compact-button {
   min-height: 28px;
   padding: 0 10px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .button.disabled {

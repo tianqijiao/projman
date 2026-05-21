@@ -3,8 +3,10 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlmodel import Session, select
 
 from app.main import create_app
+from app.models import AnnualAttachment, AnnualExecution
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -455,3 +457,130 @@ def test_project_excel_export_omits_attachment_columns(tmp_path):
     assert "采购依据.pdf" not in workbook_xml
     assert "合同审签 PDF" not in workbook_xml
     assert "其他附件" not in workbook_xml
+
+
+def test_cross_year_project_appears_in_each_execution_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={
+            "year": "2026",
+            "name": "三年云平台服务",
+            "budget_amount": "300000",
+        },
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2026",
+            "name": "三年云平台服务",
+            "budget_amount": "300000",
+            "contract_amount": "270000",
+            "contract_start": "2027-01-01",
+            "contract_end": "2029-12-31",
+            "notes": "",
+        },
+    )
+
+    contract_year_response = client.get("/projects?year=2026")
+    execution_year_response = client.get("/projects?year=2028")
+
+    assert contract_year_response.status_code == 200
+    assert "三年云平台服务" in contract_year_response.text
+    assert "合同管理年" in contract_year_response.text
+    assert "100,000.00" not in contract_year_response.text
+    assert execution_year_response.status_code == 200
+    assert "三年云平台服务" in execution_year_response.text
+    assert "100,000.00" in execution_year_response.text
+    assert "90,000.00" in execution_year_response.text
+
+
+def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度安全服务", "budget_amount": "60000"},
+    )
+    detail_response = client.get("/projects/1")
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    assert detail_response.status_code == 200
+    assert "年度执行计划" in detail_response.text
+    assert 'name="contract_only"' in detail_response.text
+
+    client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "62000",
+            "contract_amount": "61000",
+            "acceptance_date": "2027-12-31",
+            "payment_date": "2028-01-15",
+            "notes": "第一年付款",
+        },
+    )
+    client.post(
+        f"/annual-executions/{execution.id}/attachments",
+        data={"kind": "acceptance"},
+        files={"file": ("2027验收单.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    client.post(
+        f"/annual-executions/{execution.id}/attachments",
+        data={"kind": "invoice"},
+        files={"file": ("2027发票.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    with Session(client.app.state.engine) as session:
+        annual_attachments = session.exec(select(AnnualAttachment)).all()
+    preview_response = client.get(f"/annual-attachments/{annual_attachments[0].id}/preview")
+    inline_response = client.get(f"/annual-attachments/{annual_attachments[0].id}/file")
+    download_response = client.get(f"/annual-attachments/{annual_attachments[0].id}/download")
+    year_zip_response = client.get(
+        f"/annual-executions/{execution.id}/attachments/download-year"
+    )
+    all_zip_response = client.get("/projects/1/attachments/download-all")
+
+    updated_response = client.get("/projects/1")
+
+    assert preview_response.status_code == 200
+    assert f'src="/annual-attachments/{annual_attachments[0].id}/file"' in preview_response.text
+    assert inline_response.headers["content-type"] == "application/pdf"
+    assert download_response.headers["content-type"] == "application/pdf"
+    assert "project-1-2027-attachments.zip" in year_zip_response.headers["content-disposition"]
+    assert "project-1-attachments.zip" in all_zip_response.headers["content-disposition"]
+    assert "62,000.00" in updated_response.text
+    assert "2027验收单.pdf" in updated_response.text
+    assert "2027发票.pdf" in updated_response.text
+
+
+def test_excel_export_uses_annual_execution_rows(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2026", "name": "三年云平台服务", "budget_amount": "300000"},
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2026",
+            "name": "三年云平台服务",
+            "budget_amount": "300000",
+            "contract_amount": "270000",
+            "contract_start": "2027-01-01",
+            "contract_end": "2029-12-31",
+            "notes": "",
+        },
+    )
+
+    export_response = client.get("/projects/export?year=2028")
+
+    workbook_path = tmp_path / "annual-export.xlsx"
+    workbook_path.write_bytes(export_response.content)
+    workbook = load_workbook(workbook_path)
+    sheet = workbook.active
+    assert sheet["A3"].value == 2028
+    assert sheet["B3"].value == "三年云平台服务"
+    assert sheet["C3"].value == 100000
+    assert sheet["D3"].value == 90000

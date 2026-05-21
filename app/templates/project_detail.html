@@ -4,40 +4,38 @@
 <section class="toolbar">
   <div>
     <h1>{{ overview.project.name }}</h1>
-    <p>{{ overview.project.year }} 年度项目</p>
+    <p>{{ overview.project.year }} 年建档 / 签约</p>
   </div>
   <a class="button ghost-link" href="/projects?year={{ overview.project.year }}">返回台账</a>
 </section>
 
 <section class="metrics compact">
-  <div><span>{{ overview.project.budget_amount or "-" }}</span><label>预算金额</label></div>
-  <div><span>{{ overview.project.contract_amount or "-" }}</span><label>合同金额</label></div>
-  <div><span class="{% if overview.budget_delta.is_over_budget %}danger{% endif %}">{% if overview.budget_delta.difference is not none %}{{ "%.2f"|format(overview.budget_delta.difference) }}{% else %}-{% endif %}</span><label>预算差额</label></div>
+  <div><span>{{ money(overview.project.budget_amount) }}</span><label>项目预算总额</label></div>
+  <div><span>{{ money(overview.project.contract_amount) }}</span><label>合同总额</label></div>
+  <div><span class="{% if overview.budget_delta.is_over_budget %}danger{% endif %}">{% if overview.budget_delta.difference is not none %}{{ money(overview.budget_delta.difference) }}{% else %}-{% endif %}</span><label>总额差额</label></div>
   <div><span>{{ overview.project.contract_end or "-" }}</span><label>合同结束</label></div>
 </section>
 
 <section class="split-grid">
   <div class="panel">
-    <div class="panel-head"><h2>项目字段</h2><div>{% set item = overview %}{% include "_status.html" %}</div></div>
+    <div class="panel-head"><h2>项目主档</h2></div>
     <form method="post" action="/projects/{{ overview.project.id }}/edit" class="form-grid">
-      <label>年度<input name="year" type="number" value="{{ overview.project.year }}" required></label>
+      <label>建档/签约年度<input name="year" type="number" value="{{ overview.project.year }}" required></label>
       <label>项目名称<input name="name" value="{{ overview.project.name }}" required></label>
-      <label>预算金额<input name="budget_amount" type="number" step="0.01" value="{{ overview.project.budget_amount or '' }}"></label>
-      <label>合同金额<input name="contract_amount" type="number" step="0.01" value="{{ overview.project.contract_amount or '' }}"></label>
+      <label>项目预算总额<input name="budget_amount" type="number" step="0.01" value="{{ overview.project.budget_amount or '' }}"></label>
+      <label>合同总额<input name="contract_amount" type="number" step="0.01" value="{{ overview.project.contract_amount or '' }}"></label>
       <label>合同开始<input name="contract_start" type="date" value="{{ overview.project.contract_start or '' }}"></label>
       <label>合同结束<input name="contract_end" type="date" value="{{ overview.project.contract_end or '' }}"></label>
-      <label>验收日期<input name="acceptance_date" type="date" value="{{ overview.project.acceptance_date or '' }}"></label>
-      <label>付款日期<input name="payment_date" type="date" value="{{ overview.project.payment_date or '' }}"></label>
       <label class="wide">备注<textarea name="notes" rows="4">{{ overview.project.notes }}</textarea></label>
-      <div class="actions"><button type="submit">保存修改</button></div>
+      <div class="actions"><button type="submit">保存主档</button></div>
     </form>
   </div>
 
   <div class="panel">
-    <div class="panel-head"><h2>PDF 附件</h2></div>
+    <div class="panel-head"><h2>项目级 PDF 附件</h2></div>
     <form method="post" action="/projects/{{ overview.project.id }}/attachments" enctype="multipart/form-data" class="upload-row">
       <select name="kind">
-        {% for kind in attachment_kinds %}
+        {% for kind in project_attachment_kinds %}
         <option value="{{ kind.value }}">{{ kind.label }}</option>
         {% endfor %}
       </select>
@@ -58,12 +56,83 @@
     {% else %}
     <p class="empty">暂无附件。</p>
     {% endif %}
+  </div>
+</section>
 
-    {% if overview.status.missing_evidence %}
-    <div class="missing">
-      请补全：{{ "、".join(overview.status.missing_evidence) }}
-    </div>
-    {% endif %}
+<section class="panel annual-panel">
+  <div class="panel-head">
+    <h2>年度执行计划</h2>
+    <a href="/projects/{{ overview.project.id }}/attachments/download-all">下载项目全部附件</a>
+  </div>
+  <div class="annual-grid">
+    {% for item in annual_overviews %}
+    <article class="annual-card {% if item.execution.contract_only %}contract-only-row{% endif %}">
+      <div class="annual-card-head">
+        <div>
+          <strong>{{ item.execution.year }} 年</strong>
+        </div>
+        {% if item.execution.contract_only %}
+        <div class="status-grid contract-only-status">
+          <span class="pill {% if item.status.contract_signed %}ok{% else %}todo{% endif %}">合同已签</span>
+          <span class="pill warn">合同管理年</span>
+        </div>
+        {% else %}
+        {% include "_status.html" %}
+        {% endif %}
+      </div>
+
+      <div class="annual-amounts">
+        <div><span>{{ money(item.execution.budget_amount) if not item.execution.contract_only else "-" }}</span><label>年度预算</label></div>
+        <div><span>{{ money(item.execution.contract_amount) if not item.execution.contract_only else "-" }}</span><label>年度合同</label></div>
+      </div>
+
+      <form method="post" action="/annual-executions/{{ item.execution.id }}/edit" class="form-grid annual-form">
+        <label>年度预算<input name="budget_amount" type="number" step="0.01" value="{{ item.execution.budget_amount or '' }}"></label>
+        <label>年度合同<input name="contract_amount" type="number" step="0.01" value="{{ item.execution.contract_amount or '' }}"></label>
+        <label>验收日期<input name="acceptance_date" type="date" value="{{ item.execution.acceptance_date or '' }}"></label>
+        <label>付款日期<input name="payment_date" type="date" value="{{ item.execution.payment_date or '' }}"></label>
+        <label class="checkbox-row"><input name="contract_only" type="checkbox" {% if item.execution.contract_only %}checked{% endif %}> 合同管理年</label>
+        <label class="wide">年度备注<textarea name="notes" rows="2">{{ item.execution.notes }}</textarea></label>
+        <div class="actions"><button type="submit">保存年度</button></div>
+      </form>
+
+      {% if not item.execution.contract_only %}
+      <div class="annual-uploads">
+        {% for kind in annual_attachment_kinds %}
+        <form method="post" action="/annual-executions/{{ item.execution.id }}/attachments" enctype="multipart/form-data" class="upload-row compact-upload">
+          <input type="hidden" name="kind" value="{{ kind.value }}">
+          <label>{{ kind.label }}<input name="file" type="file" accept="application/pdf,.pdf" required></label>
+          <button type="submit">上传</button>
+        </form>
+        {% endfor %}
+      </div>
+
+      {% set annual_files = item.annual_attachments + item.legacy_annual_attachments %}
+      {% if annual_files %}
+      <ul class="attachment-list">
+        {% for attachment in annual_files %}
+        <li>
+          <span>{{ attachment.kind.label }}</span>
+          {% if attachment.execution_id is defined %}
+          <a href="/annual-attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+          <a class="mini-link" href="/annual-attachments/{{ attachment.id }}/download">下载</a>
+          {% else %}
+          <a href="/attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+          <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty">本年度暂无验收单或发票。</p>
+      {% endif %}
+
+      {% if item.status.missing_evidence %}
+      <div class="missing">请补全：{{ "、".join(item.status.missing_evidence) }}</div>
+      {% endif %}
+      {% endif %}
+    </article>
+    {% endfor %}
   </div>
 </section>
 {% endblock %}

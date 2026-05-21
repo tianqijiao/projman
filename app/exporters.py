@@ -4,7 +4,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from app.services import ProjectOverview
+from app.services import AnnualProjectOverview, ProjectOverview
 
 
 EXPORT_COLUMNS = [
@@ -23,7 +23,10 @@ EXPORT_COLUMNS = [
 ]
 
 
-def build_projects_excel(overviews: list[ProjectOverview], title: str) -> bytes:
+def build_projects_excel(
+    overviews: list[ProjectOverview | AnnualProjectOverview],
+    title: str,
+) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "项目台账"
@@ -43,20 +46,39 @@ def build_projects_excel(overviews: list[ProjectOverview], title: str) -> bytes:
 
     for item in overviews:
         project = item.project
+        execution = getattr(item, "execution", None)
+        export_year = execution.year if execution else project.year
+        budget_amount = (
+            None
+            if execution and execution.contract_only
+            else execution.budget_amount
+            if execution
+            else project.budget_amount
+        )
+        contract_amount = (
+            None
+            if execution and execution.contract_only
+            else execution.contract_amount
+            if execution
+            else project.contract_amount
+        )
+        acceptance_date = execution.acceptance_date if execution else project.acceptance_date
+        payment_date = execution.payment_date if execution else project.payment_date
+        notes = execution.notes if execution and execution.notes else project.notes
         sheet.append(
             [
-                project.year,
+                export_year,
                 project.name,
-                project.budget_amount,
-                project.contract_amount,
+                budget_amount,
+                contract_amount,
                 item.budget_delta.difference,
                 project.contract_start,
                 project.contract_end,
-                project.acceptance_date,
-                project.payment_date,
+                acceptance_date,
+                payment_date,
                 _status_text(item),
                 "、".join(item.status.missing_evidence),
-                project.notes,
+                notes,
             ]
         )
 
@@ -69,7 +91,9 @@ def build_projects_excel(overviews: list[ProjectOverview], title: str) -> bytes:
     return output.getvalue()
 
 
-def _status_text(item: ProjectOverview) -> str:
+def _status_text(item: ProjectOverview | AnnualProjectOverview) -> str:
+    if getattr(getattr(item, "execution", None), "contract_only", False):
+        return "合同管理年、合同已签" if item.status.contract_signed else "合同管理年、未签合同"
     labels = []
     if item.status.established:
         labels.append("已立项")

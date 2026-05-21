@@ -15,20 +15,27 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.domain import AttachmentKind
 from app.exporters import build_projects_excel
-from app.models import Attachment, Project
+from app.models import AnnualAttachment, AnnualExecution, Attachment, Project
 from app.services import (
+    ANNUAL_ATTACHMENT_KINDS,
+    PROJECT_ATTACHMENT_KINDS,
     STATUS_FILTER_OPTIONS,
+    annual_project_overview,
     create_project,
     dashboard_summary,
     filter_project_overviews,
     format_money,
     get_int_setting,
+    list_annual_project_overviews,
     list_project_overviews,
     normalize_status_filter,
     project_overview,
+    save_annual_attachment_bytes,
     save_attachment_bytes,
     set_int_setting,
     summarize_project_overviews,
+    sync_annual_executions,
+    update_annual_execution,
     update_project,
 )
 
@@ -165,7 +172,7 @@ def create_app(
         query = (q or "").strip()
         selected_status = normalize_status_filter(status)
         overviews = filter_project_overviews(
-            list_project_overviews(session, year=selected_year),
+            list_annual_project_overviews(session, year=selected_year),
             query=query,
             status_filter=selected_status,
         )
@@ -204,7 +211,7 @@ def create_app(
         selected_year = _parse_optional_year(year)
         selected_status = normalize_status_filter(status)
         overviews = filter_project_overviews(
-            list_project_overviews(session, year=selected_year),
+            list_annual_project_overviews(session, year=selected_year),
             query=q,
             status_filter=selected_status,
         )
@@ -233,6 +240,12 @@ def create_app(
         if project is None:
             return RedirectResponse("/projects", status_code=303)
         attachments = project_overview(session, project).attachments
+        annual_executions = sync_annual_executions(session, project)
+        annual_attachments = [
+            attachment
+            for execution in annual_executions
+            for attachment in annual_project_overview(session, execution).annual_attachments
+        ]
         archive = BytesIO()
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for attachment in attachments:
@@ -241,6 +254,16 @@ def create_app(
                     zip_file.write(
                         path,
                         arcname=f"{attachment.kind.label}/{attachment.original_filename}",
+                    )
+            for attachment in annual_attachments:
+                path = app.state.data_dir / attachment.stored_path
+                if path.exists():
+                    zip_file.write(
+                        path,
+                        arcname=(
+                            f"年度资料/{attachment.kind.label}/"
+                            f"{attachment.original_filename}"
+                        ),
                     )
         archive.seek(0)
         return Response(
@@ -277,13 +300,14 @@ def create_app(
     ):
         if redirect := login_redirect(request):
             return redirect
-        create_project(
+        project = create_project(
             session,
             year=year,
             name=name,
             budget_amount=_parse_float(budget_amount),
             notes=notes,
         )
+        sync_annual_executions(session, project)
         return RedirectResponse(f"/?year={year}", status_code=303)
 
     @app.get("/projects/{project_id}")
@@ -297,12 +321,19 @@ def create_app(
         project = session.get(Project, project_id)
         if project is None:
             return RedirectResponse("/projects", status_code=303)
+        annual_overviews = [
+            annual_project_overview(session, execution)
+            for execution in sync_annual_executions(session, project)
+        ]
         return templates.TemplateResponse(
             request,
             "project_detail.html",
             {
                 "overview": project_overview(session, project),
-                "attachment_kinds": list(AttachmentKind),
+                "annual_overviews": annual_overviews,
+                "project_attachment_kinds": PROJECT_ATTACHMENT_KINDS,
+                "annual_attachment_kinds": ANNUAL_ATTACHMENT_KINDS,
+                "money": format_money,
             },
         )
 
@@ -323,7 +354,7 @@ def create_app(
     ):
         if redirect := login_redirect(request):
             return redirect
-        update_project(
+        project = update_project(
             session,
             project_id,
             year=year,
@@ -336,7 +367,104 @@ def create_app(
             payment_date=_parse_date(payment_date),
             notes=notes.strip(),
         )
+        sync_annual_executions(session, project)
         return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+    @app.post("/annual-executions/{execution_id}/edit")
+    def edit_annual_execution(
+        request: Request,
+        execution_id: int,
+        session: Annotated[Session, Depends(get_session)],
+        budget_amount: Annotated[str, Form()] = "",
+        contract_amount: Annotated[str, Form()] = "",
+        contract_only: Annotated[str | None, Form()] = None,
+        acceptance_date: Annotated[str, Form()] = "",
+        payment_date: Annotated[str, Form()] = "",
+        notes: Annotated[str, Form()] = "",
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        execution = session.get(AnnualExecution, execution_id)
+        if execution is None:
+            return RedirectResponse("/projects", status_code=303)
+        update_annual_execution(
+            session,
+            execution_id,
+            budget_amount=_parse_float(budget_amount),
+            contract_amount=_parse_float(contract_amount),
+            contract_only=contract_only == "on",
+            acceptance_date=_parse_date(acceptance_date),
+            payment_date=_parse_date(payment_date),
+            notes=notes.strip(),
+        )
+        return RedirectResponse(f"/projects/{execution.project_id}", status_code=303)
+
+    @app.post("/annual-executions/{execution_id}/attachments")
+    async def upload_annual_attachment(
+        request: Request,
+        execution_id: int,
+        session: Annotated[Session, Depends(get_session)],
+        kind: Annotated[str, Form()],
+        file: Annotated[UploadFile, File()],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        execution = session.get(AnnualExecution, execution_id)
+        if execution is None:
+            return RedirectResponse("/projects", status_code=303)
+        content = await file.read()
+        save_annual_attachment_bytes(
+            session,
+            execution=execution,
+            data_dir=app.state.data_dir,
+            kind=AttachmentKind(kind),
+            original_filename=file.filename or "attachment.pdf",
+            content=content,
+        )
+        return RedirectResponse(f"/projects/{execution.project_id}", status_code=303)
+
+    @app.get("/annual-executions/{execution_id}/attachments/download-year")
+    def download_annual_execution_attachments(
+        request: Request,
+        execution_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        execution = session.get(AnnualExecution, execution_id)
+        if execution is None:
+            return RedirectResponse("/projects", status_code=303)
+        overview = annual_project_overview(session, execution)
+        archive = BytesIO()
+        with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
+            for attachment in overview.project_attachments:
+                path = app.state.data_dir / attachment.stored_path
+                if path.exists():
+                    zip_file.write(
+                        path,
+                        arcname=f"项目资料/{attachment.kind.label}/{attachment.original_filename}",
+                    )
+            for attachment in [
+                *overview.annual_attachments,
+                *overview.legacy_annual_attachments,
+            ]:
+                path = app.state.data_dir / attachment.stored_path
+                if path.exists():
+                    zip_file.write(
+                        path,
+                        arcname=f"年度资料/{attachment.kind.label}/{attachment.original_filename}",
+                    )
+        archive.seek(0)
+        return Response(
+            archive.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="project-{execution.project_id}-'
+                    f'{execution.year}-attachments.zip"'
+                )
+            },
+        )
 
     @app.post("/projects/{project_id}/attachments")
     async def upload_attachment(
@@ -388,7 +516,32 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "attachment_preview.html",
-            {"attachment": attachment},
+            {
+                "attachment": attachment,
+                "file_url": f"/attachments/{attachment.id}/file",
+                "download_url": f"/attachments/{attachment.id}/download",
+            },
+        )
+
+    @app.get("/annual-attachments/{attachment_id}/preview")
+    def preview_annual_attachment(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        attachment = session.get(AnnualAttachment, attachment_id)
+        if attachment is None:
+            return RedirectResponse("/projects", status_code=303)
+        return templates.TemplateResponse(
+            request,
+            "attachment_preview.html",
+            {
+                "attachment": attachment,
+                "file_url": f"/annual-attachments/{attachment.id}/file",
+                "download_url": f"/annual-attachments/{attachment.id}/download",
+            },
         )
 
     @app.get("/attachments/{attachment_id}/file")
@@ -419,6 +572,34 @@ def create_app(
             content_disposition_type="attachment",
         )
 
+    @app.get("/annual-attachments/{attachment_id}/file")
+    def inline_annual_attachment(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        return _annual_attachment_file_response(
+            request,
+            attachment_id,
+            session,
+            app.state.data_dir,
+            content_disposition_type="inline",
+        )
+
+    @app.get("/annual-attachments/{attachment_id}/download")
+    def download_annual_attachment(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        return _annual_attachment_file_response(
+            request,
+            attachment_id,
+            session,
+            app.state.data_dir,
+            content_disposition_type="attachment",
+        )
+
     def _attachment_file_response(
         request: Request,
         attachment_id: int,
@@ -440,24 +621,55 @@ def create_app(
             content_disposition_type=content_disposition_type,
         )
 
+    def _annual_attachment_file_response(
+        request: Request,
+        attachment_id: int,
+        session: Session,
+        data_dir: Path,
+        *,
+        content_disposition_type: str,
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        attachment = session.get(AnnualAttachment, attachment_id)
+        if attachment is None:
+            return RedirectResponse("/projects", status_code=303)
+        path = data_dir / attachment.stored_path
+        return FileResponse(
+            path,
+            filename=attachment.original_filename,
+            media_type="application/pdf",
+            content_disposition_type=content_disposition_type,
+        )
+
     return app
 
 
 def _available_years(session: Session, selected_year: int) -> list[int]:
     years = {selected_year}
+    for execution in session.exec(select_annual_executions_by_year()):
+        years.add(execution.year)
     for project in session.exec(select_projects_by_year()):
         years.add(project.year)
     return sorted(years, reverse=True)
 
 
 def _project_years(session: Session) -> list[int]:
-    return sorted({project.year for project in session.exec(select_projects_by_year())}, reverse=True)
+    years = {execution.year for execution in session.exec(select_annual_executions_by_year())}
+    years.update(project.year for project in session.exec(select_projects_by_year()))
+    return sorted(years, reverse=True)
 
 
 def select_projects_by_year():
     from sqlmodel import select
 
     return select(Project).order_by(Project.year.desc())
+
+
+def select_annual_executions_by_year():
+    from sqlmodel import select
+
+    return select(AnnualExecution).order_by(AnnualExecution.year.desc())
 
 
 def _parse_float(value: str) -> float | None:

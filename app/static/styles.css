@@ -301,6 +301,13 @@ tbody tr {
 td { color: var(--ink); }
 tbody tr:hover { background: #fbfcf8; }
 tbody tr:last-child { border-bottom: 0; }
+tbody tr.contract-only-row,
+.contract-only-row {
+  background: #fff9ec;
+}
+tbody tr.contract-only-row:hover {
+  background: #fff4da;
+}
 .projects-table th:nth-child(1),
 .projects-table td:nth-child(1) { width: 58px; }
 .projects-table th:nth-child(2),
@@ -323,7 +330,7 @@ tbody tr:last-child { border-bottom: 0; }
 .projects-table th:nth-child(7),
 .projects-table td:nth-child(7) { width: 410px; }
 .projects-table th:nth-child(8),
-.projects-table td:nth-child(8) { width: 100px; }
+.projects-table td:nth-child(8) { width: 108px; }
 
 .status-grid {
   display: grid;
@@ -340,6 +347,20 @@ tbody tr:last-child { border-bottom: 0; }
   display: grid;
   gap: 2px;
   line-height: 1.35;
+  white-space: nowrap;
+}
+.row-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  margin-top: 4px;
+  padding: 0 6px;
+  border: 1px solid #efd8a6;
+  border-radius: 4px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 700;
   white-space: nowrap;
 }
 .money-cell {
@@ -374,6 +395,9 @@ tbody tr:last-child { border-bottom: 0; }
 .projects-table .status-grid .pill {
   min-width: 66px;
   margin: 0;
+}
+.contract-only-status {
+  grid-template-columns: repeat(3, max-content);
 }
 .pill.ok {
   background: var(--green-soft);
@@ -420,6 +444,15 @@ tbody tr:last-child { border-bottom: 0; }
   grid-template-columns: 78px minmax(0, 1fr);
   align-items: start;
 }
+.checkbox-row {
+  grid-template-columns: auto 1fr !important;
+  justify-content: start;
+  text-align: left !important;
+}
+.checkbox-row input {
+  width: auto;
+  min-height: auto;
+}
 .wide, .actions { grid-column: 1 / -1; }
 .actions {
   display: flex;
@@ -433,6 +466,16 @@ tbody tr:last-child { border-bottom: 0; }
   grid-template-columns: 150px 1fr auto;
   gap: 9px;
   align-items: center;
+}
+.compact-upload {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.compact-upload label {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
 }
 input[type="file"] {
   padding: 5px 10px;
@@ -549,6 +592,13 @@ input[type="file"] {
   font-size: 12px;
   white-space: nowrap;
 }
+.download-stack {
+  display: grid;
+  gap: 5px;
+}
+.download-stack .compact-button {
+  width: 100%;
+}
 .button.disabled {
   background: #f4f5f1;
   color: #9aa2a8;
@@ -576,6 +626,71 @@ input[type="file"] {
   background: #fffaf0;
   color: var(--amber);
   font-size: 13px;
+}
+
+.annual-panel {
+  margin-top: 16px;
+}
+.annual-grid {
+  display: grid;
+  gap: 12px;
+}
+.annual-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+  background: #fffefa;
+  padding: 12px;
+}
+.annual-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.annual-card-head strong {
+  font-family: var(--serif);
+  font-size: 18px;
+}
+.annual-amounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.annual-amounts div {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fbfcf8;
+  padding: 7px 9px;
+}
+.annual-amounts span {
+  display: block;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.annual-amounts label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.annual-form {
+  padding-top: 4px;
+}
+.annual-form textarea {
+  min-height: 48px;
+}
+.annual-uploads {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.annual-card .attachment-list li {
+  grid-template-columns: 110px minmax(0, 1fr) auto;
 }
 
 .login-page {

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.domain import AttachmentKind
@@ -27,6 +28,34 @@ class Project(SQLModel, table=True):
 class Attachment(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
+    kind: AttachmentKind = Field(index=True)
+    original_filename: str
+    stored_path: str
+    uploaded_at: datetime = Field(default_factory=datetime.now)
+
+
+class AnnualExecution(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("project_id", "year", name="uq_annual_execution_project_year"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    year: int = Field(index=True)
+    budget_amount: float | None = default_money()
+    contract_amount: float | None = default_money()
+    contract_only: bool = Field(default=False, index=True)
+    acceptance_date: date | None = None
+    payment_date: date | None = None
+    notes: str = ""
+    manual_amounts: bool = False
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class AnnualAttachment(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    execution_id: int = Field(foreign_key="annualexecution.id", index=True)
     kind: AttachmentKind = Field(index=True)
     original_filename: str
     stored_path: str

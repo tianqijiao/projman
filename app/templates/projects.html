@@ -41,20 +41,37 @@
     <div><span>{{ ledger_summary.incomplete_count }}</span><label>待补资料</label></div>
   </div>
   <table class="projects-table">
-    <thead><tr><th>年度</th><th>项目</th><th class="money-head">预算(元)</th><th class="money-head">合同金额(元)</th><th>合同期</th><th>状态</th><th>附件</th><th>全部附件</th></tr></thead>
+    <thead><tr><th>年度</th><th>项目</th><th class="money-head">预算(元)</th><th class="money-head">合同金额(元)</th><th>合同期</th><th>状态</th><th>附件</th><th>下载</th></tr></thead>
     <tbody>
       {% for item in overviews %}
-      <tr>
-        <td>{{ item.project.year }}</td>
-        <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
-        <td class="money-cell {% if item.project.budget_amount is none %}empty-value{% endif %}">{{ money(item.project.budget_amount) }}</td>
-        <td class="money-cell {% if item.project.contract_amount is none %}empty-value{% endif %}">{{ money(item.project.contract_amount) }}</td>
+      <tr class="{% if item.execution.contract_only %}contract-only-row{% endif %}">
+        <td>{{ item.execution.year }}</td>
+        <td>
+          <a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a>
+          {% if item.execution.contract_only %}<span class="row-note">合同管理年</span>{% endif %}
+        </td>
+        <td class="money-cell {% if item.execution.contract_only or item.execution.budget_amount is none %}empty-value{% endif %}">
+          {% if item.execution.contract_only %}-{% else %}{{ money(item.execution.budget_amount) }}{% endif %}
+        </td>
+        <td class="money-cell {% if item.execution.contract_only or item.execution.contract_amount is none %}empty-value{% endif %}">
+          {% if item.execution.contract_only %}-{% else %}{{ money(item.execution.contract_amount) }}{% endif %}
+        </td>
         <td>
           {% if item.project.contract_start and item.project.contract_end %}
           <span class="contract-period"><span>{{ item.project.contract_start }} 至</span><span>{{ item.project.contract_end }}</span></span>
           {% else %}-{% endif %}
         </td>
-        <td>{% include "_status.html" %}</td>
+        <td>
+          {% if item.execution.contract_only %}
+          <div class="status-grid contract-only-status">
+            <span class="pill {% if item.status.established %}ok{% endif %}">已立项</span>
+            <span class="pill {% if item.status.contract_signed %}ok{% else %}todo{% endif %}">合同已签</span>
+            <span class="pill warn">合同管理年</span>
+          </div>
+          {% else %}
+          {% include "_status.html" %}
+          {% endif %}
+        </td>
         <td>
           <div class="attachment-summary">
             {% for kind in attachment_kinds %}
@@ -65,8 +82,13 @@
               <ul>
                 {% for attachment in files %}
                 <li>
+                  {% if attachment.execution_id is defined %}
+                  <a href="/annual-attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+                  <a class="mini-link" href="/annual-attachments/{{ attachment.id }}/download">下载</a>
+                  {% else %}
                   <a href="/attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
                   <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
+                  {% endif %}
                 </li>
                 {% endfor %}
               </ul>
@@ -79,7 +101,10 @@
         </td>
         <td>
           {% if item.attachments %}
-          <a class="button compact-button ghost-link" href="/projects/{{ item.project.id }}/attachments/download-all">下载全部</a>
+          <div class="download-stack">
+            <a class="button compact-button ghost-link" href="/annual-executions/{{ item.execution.id }}/attachments/download-year">本年</a>
+            <a class="button compact-button ghost-link" href="/projects/{{ item.project.id }}/attachments/download-all">全部</a>
+          </div>
           {% else %}
           <span class="button compact-button disabled">暂无附件</span>
           {% endif %}

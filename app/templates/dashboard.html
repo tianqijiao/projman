@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}年度看板 - 运维项目管理{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>{{ selected_year }} 年度执行看板</h1>
+    <p>预算项目、合同、验收、付款和提前 {{ renewal_lead_days }} 天续采提醒</p>
+  </div>
+  <form method="get" action="/">
+    <select name="year" onchange="this.form.submit()">
+      {% for year in years %}
+      <option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</section>
+
+<section class="metrics">
+  <div><span>{{ summary.total_projects }}</span><label>项目总数</label></div>
+  <div><span>{{ summary.established_count }}</span><label>已立项</label></div>
+  <div><span>{{ summary.unsigned_contract_count }}</span><label>未签合同</label></div>
+  <div><span>{{ summary.unaccepted_count }}</span><label>未验收</label></div>
+  <div><span>{{ summary.unpaid_count }}</span><label>未付款</label></div>
+</section>
+
+<section class="split-grid">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>续采提醒</h2>
+      <a href="/projects/new">新增下一期</a>
+    </div>
+    {% if summary.renewal_due %}
+    <table>
+      <thead><tr><th>项目</th><th>合同结束</th><th>动作</th></tr></thead>
+      <tbody>
+      {% for item in summary.renewal_due %}
+      <tr>
+        <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
+        <td>{{ item.project.contract_end }}</td>
+        <td><span class="pill warn">启动下一期采购</span></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">暂无提醒期内到期的合同。</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>项目状态</h2>
+      <a href="/projects?year={{ selected_year }}">查看台账</a>
+    </div>
+    <table>
+      <thead><tr><th>项目</th><th>状态</th><th>预算差额</th></tr></thead>
+      <tbody>
+      {% for item in summary.projects %}
+      <tr>
+        <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
+        <td>{% include "_status.html" %}</td>
+        <td class="{% if item.budget_delta.is_over_budget %}danger{% endif %}">
+          {% if item.budget_delta.difference is not none %}{{ "%.2f"|format(item.budget_delta.difference) }}{% else %}-{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

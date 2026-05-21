@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}项目台账 - 运维项目管理{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>项目台账</h1>
+    <p>{% if year %}{{ year }} 年{% else %}全部年度{% endif %}</p>
+  </div>
+  <a class="button" href="/projects/new">新增项目</a>
+</section>
+<section class="panel">
+  <table>
+    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同</th><th>合同期</th><th>状态</th></tr></thead>
+    <tbody>
+      {% for item in overviews %}
+      <tr>
+        <td>{{ item.project.year }}</td>
+        <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
+        <td>{{ item.project.budget_amount or "-" }}</td>
+        <td>{{ item.project.contract_amount or "-" }}</td>
+        <td>{% if item.project.contract_start and item.project.contract_end %}{{ item.project.contract_start }} 至 {{ item.project.contract_end }}{% else %}-{% endif %}</td>
+        <td>{% include "_status.html" %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

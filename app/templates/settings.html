@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}设置 - 运维项目管理{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>设置</h1>
+    <p>本地运行参数</p>
+  </div>
+</section>
+<section class="panel narrow">
+  <form method="post" action="/settings" class="form-grid">
+    <label>续采提醒提前天数
+      <input name="renewal_lead_days" type="number" min="1" max="365" value="{{ renewal_lead_days }}" required>
+    </label>
+    <div class="actions"><button type="submit">保存设置</button></div>
+  </form>
+</section>
+{% endblock %}

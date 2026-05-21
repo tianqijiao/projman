@@ -22,7 +22,7 @@
 </section>
 <section class="panel">
   <table class="projects-table">
-    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同</th><th>合同期</th><th>状态</th><th>附件</th></tr></thead>
+    <thead><tr><th>年度</th><th>项目</th><th>预算</th><th>合同</th><th>合同期</th><th>状态</th><th>附件</th><th>全部附件</th></tr></thead>
     <tbody>
       {% for item in overviews %}
       <tr>
@@ -41,7 +41,10 @@
               {% if files %}
               <ul>
                 {% for attachment in files %}
-                <li><a href="/attachments/{{ attachment.id }}">{{ attachment.original_filename }}</a></li>
+                <li>
+                  <a href="/attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+                  <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
+                </li>
                 {% endfor %}
               </ul>
               {% else %}
@@ -50,6 +53,13 @@
             </details>
             {% endfor %}
           </div>
+        </td>
+        <td>
+          {% if item.attachments %}
+          <a class="button compact-button ghost-link" href="/projects/{{ item.project.id }}/attachments/download-all">下载全部</a>
+          {% else %}
+          <span class="button compact-button disabled">暂无附件</span>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

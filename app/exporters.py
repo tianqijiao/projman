@@ -4,7 +4,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from app.domain import AttachmentKind
 from app.services import ProjectOverview
 
 
@@ -20,12 +19,6 @@ EXPORT_COLUMNS = [
     "付款日期",
     "状态",
     "缺少材料",
-    "采购依据",
-    "合同审签 PDF",
-    "盖章合同扫描件",
-    "验收单",
-    "发票",
-    "其他附件",
     "备注",
 ]
 
@@ -50,14 +43,6 @@ def build_projects_excel(overviews: list[ProjectOverview], title: str) -> bytes:
 
     for item in overviews:
         project = item.project
-        attachments_by_kind = {
-            kind: [
-                attachment.original_filename
-                for attachment in item.attachments
-                if attachment.kind == kind
-            ]
-            for kind in AttachmentKind
-        }
         sheet.append(
             [
                 project.year,
@@ -71,12 +56,6 @@ def build_projects_excel(overviews: list[ProjectOverview], title: str) -> bytes:
                 project.payment_date,
                 _status_text(item),
                 "、".join(item.status.missing_evidence),
-                _join_files(attachments_by_kind[AttachmentKind.PROCUREMENT_BASIS]),
-                _join_files(attachments_by_kind[AttachmentKind.CONTRACT_REVIEW]),
-                _join_files(attachments_by_kind[AttachmentKind.SIGNED_CONTRACT]),
-                _join_files(attachments_by_kind[AttachmentKind.ACCEPTANCE]),
-                _join_files(attachments_by_kind[AttachmentKind.INVOICE]),
-                _join_files(attachments_by_kind[AttachmentKind.OTHER]),
                 project.notes,
             ]
         )
@@ -103,10 +82,6 @@ def _status_text(item: ProjectOverview) -> str:
     return "、".join(labels) or "未立项"
 
 
-def _join_files(files: list[str]) -> str:
-    return "；".join(files)
-
-
 def _format_columns(sheet) -> None:
     widths = {
         "A": 10,
@@ -120,13 +95,7 @@ def _format_columns(sheet) -> None:
         "I": 14,
         "J": 24,
         "K": 24,
-        "L": 28,
-        "M": 28,
-        "N": 28,
-        "O": 28,
-        "P": 28,
-        "Q": 28,
-        "R": 30,
+        "L": 30,
     }
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width

@@ -126,7 +126,50 @@ def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
     assert "发票" in response.text
     assert "盖章合同.pdf" in response.text
     assert "发票.pdf" in response.text
-    assert 'href="/attachments/' in response.text
+    assert 'href="/attachments/1/preview"' in response.text
+    assert 'href="/attachments/1/download"' in response.text
+    assert 'href="/projects/1/attachments/download-all"' in response.text
+
+
+def test_attachment_preview_download_and_download_all(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "行政电脑维护服务", "budget_amount": "50000"},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "procurement_basis"},
+        files={"file": ("采购依据.pdf", b"%PDF-1.7 fake basis", "application/pdf")},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "invoice"},
+        files={"file": ("发票.pdf", b"%PDF-1.7 fake invoice", "application/pdf")},
+    )
+
+    preview_response = client.get("/attachments/1/preview")
+    inline_response = client.get("/attachments/1/file")
+    download_response = client.get("/attachments/1/download")
+    all_response = client.get("/projects/1/attachments/download-all")
+
+    assert preview_response.status_code == 200
+    assert "采购依据.pdf" in preview_response.text
+    assert 'src="/attachments/1/file"' in preview_response.text
+    assert 'href="/attachments/1/download"' in preview_response.text
+    assert inline_response.headers["content-disposition"].startswith("inline;")
+    assert download_response.headers["content-disposition"].startswith("attachment;")
+    assert all_response.status_code == 200
+    assert all_response.headers["content-type"].startswith("application/zip")
+    assert "project-1-attachments.zip" in all_response.headers["content-disposition"]
+
+    zip_path = tmp_path / "attachments.zip"
+    zip_path.write_bytes(all_response.content)
+    with ZipFile(zip_path) as attachments_zip:
+        names = attachments_zip.namelist()
+        assert any(name.endswith("采购依据.pdf") for name in names)
+        assert any(name.endswith("发票.pdf") for name in names)
 
 
 def test_project_list_can_filter_by_year(tmp_path):
@@ -189,3 +232,33 @@ def test_project_list_exports_filtered_year_to_excel(tmp_path):
         )
     assert "2027 年项目" in workbook_xml
     assert "2028 年项目" not in workbook_xml
+
+
+def test_project_excel_export_omits_attachment_columns(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "2027 年项目", "budget_amount": "100"},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "procurement_basis"},
+        files={"file": ("采购依据.pdf", b"%PDF-1.7 fake basis", "application/pdf")},
+    )
+
+    export_response = client.get("/projects/export?year=2027")
+
+    workbook_path = tmp_path / "export.xlsx"
+    workbook_path.write_bytes(export_response.content)
+    with ZipFile(workbook_path) as workbook_zip:
+        workbook_xml = "\n".join(
+            workbook_zip.read(name).decode("utf-8", errors="ignore")
+            for name in workbook_zip.namelist()
+            if name.startswith("xl/")
+            and name.endswith(".xml")
+            and ("worksheet" in name or "sharedStrings" in name)
+        )
+    assert "采购依据.pdf" not in workbook_xml
+    assert "合同审签 PDF" not in workbook_xml
+    assert "其他附件" not in workbook_xml

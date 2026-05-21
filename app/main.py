@@ -1,7 +1,9 @@
 from datetime import date
+from io import BytesIO
 import os
 from pathlib import Path
 from typing import Annotated
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -181,6 +183,38 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    @app.get("/projects/{project_id}/attachments/download-all")
+    def download_project_attachments(
+        request: Request,
+        project_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        project = session.get(Project, project_id)
+        if project is None:
+            return RedirectResponse("/projects", status_code=303)
+        attachments = project_overview(session, project).attachments
+        archive = BytesIO()
+        with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
+            for attachment in attachments:
+                path = app.state.data_dir / attachment.stored_path
+                if path.exists():
+                    zip_file.write(
+                        path,
+                        arcname=f"{attachment.kind.label}/{attachment.original_filename}",
+                    )
+        archive.seek(0)
+        return Response(
+            archive.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="project-{project_id}-attachments.zip"'
+                )
+            },
+        )
+
     @app.get("/projects/new")
     def new_project(request: Request):
         if redirect := login_redirect(request):
@@ -291,7 +325,19 @@ def create_app(
         return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
     @app.get("/attachments/{attachment_id}")
-    def download_attachment(
+    def attachment_entry(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        if session.get(Attachment, attachment_id) is None:
+            return RedirectResponse("/projects", status_code=303)
+        return RedirectResponse(f"/attachments/{attachment_id}/preview", status_code=303)
+
+    @app.get("/attachments/{attachment_id}/preview")
+    def preview_attachment(
         request: Request,
         attachment_id: int,
         session: Annotated[Session, Depends(get_session)],
@@ -301,8 +347,60 @@ def create_app(
         attachment = session.get(Attachment, attachment_id)
         if attachment is None:
             return RedirectResponse("/projects", status_code=303)
-        path = app.state.data_dir / attachment.stored_path
-        return FileResponse(path, filename=attachment.original_filename)
+        return templates.TemplateResponse(
+            request,
+            "attachment_preview.html",
+            {"attachment": attachment},
+        )
+
+    @app.get("/attachments/{attachment_id}/file")
+    def inline_attachment(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        return _attachment_file_response(
+            request,
+            attachment_id,
+            session,
+            app.state.data_dir,
+            content_disposition_type="inline",
+        )
+
+    @app.get("/attachments/{attachment_id}/download")
+    def download_attachment(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        return _attachment_file_response(
+            request,
+            attachment_id,
+            session,
+            app.state.data_dir,
+            content_disposition_type="attachment",
+        )
+
+    def _attachment_file_response(
+        request: Request,
+        attachment_id: int,
+        session: Session,
+        data_dir: Path,
+        *,
+        content_disposition_type: str,
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        attachment = session.get(Attachment, attachment_id)
+        if attachment is None:
+            return RedirectResponse("/projects", status_code=303)
+        path = data_dir / attachment.stored_path
+        return FileResponse(
+            path,
+            filename=attachment.original_filename,
+            media_type="application/pdf",
+            content_disposition_type=content_disposition_type,
+        )
 
     return app
 

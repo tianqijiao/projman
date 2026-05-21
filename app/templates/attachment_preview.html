@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ attachment.original_filename }} - 附件预览{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>附件预览</h1>
+    <p>{{ attachment.kind.label }} · {{ attachment.original_filename }}</p>
+  </div>
+  <div class="toolbar-actions">
+    <a class="button ghost-link" href="/projects">返回台账</a>
+    <a class="button" href="/attachments/{{ attachment.id }}/download">下载附件</a>
+  </div>
+</section>
+<section class="panel preview-panel">
+  <iframe class="pdf-preview" src="/attachments/{{ attachment.id }}/file" title="{{ attachment.original_filename }}"></iframe>
+</section>
+{% endblock %}

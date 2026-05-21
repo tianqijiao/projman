@@ -1,4 +1,5 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
@@ -151,3 +152,40 @@ def test_project_list_can_filter_by_year(tmp_path):
     assert "2027 年项目" in filtered_response.text
     assert "2028 年项目" not in filtered_response.text
     assert '<option value="2027" selected>2027 年</option>' in filtered_response.text
+
+
+def test_project_list_exports_filtered_year_to_excel(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "2027 年项目", "budget_amount": "100"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2028", "name": "2028 年项目", "budget_amount": "200"},
+    )
+
+    page_response = client.get("/projects?year=2027")
+    export_response = client.get("/projects/export?year=2027")
+
+    assert page_response.status_code == 200
+    assert 'href="/projects/export?year=2027"' in page_response.text
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "projects-2027.xlsx" in export_response.headers["content-disposition"]
+
+    workbook_path = tmp_path / "export.xlsx"
+    workbook_path.write_bytes(export_response.content)
+    with ZipFile(workbook_path) as workbook_zip:
+        workbook_xml = "\n".join(
+            workbook_zip.read(name).decode("utf-8", errors="ignore")
+            for name in workbook_zip.namelist()
+            if name.startswith("xl/")
+            and name.endswith(".xml")
+            and ("worksheet" in name or "sharedStrings" in name)
+        )
+    assert "2027 年项目" in workbook_xml
+    assert "2028 年项目" not in workbook_xml

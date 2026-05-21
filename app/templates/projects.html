@@ -16,6 +16,7 @@
         {% endfor %}
       </select>
     </form>
+    <a class="button ghost-link" href="/projects/export{% if year %}?year={{ year }}{% endif %}">导出Excel</a>
     <a class="button" href="/projects/new">新增项目</a>
   </div>
 </section>

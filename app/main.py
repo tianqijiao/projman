@@ -4,13 +4,14 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, SQLModel, create_engine
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.domain import AttachmentKind
+from app.exporters import build_projects_excel
 from app.models import Attachment, Project
 from app.services import (
     create_project,
@@ -160,6 +161,24 @@ def create_app(
                 "years": _project_years(session),
                 "attachment_kinds": list(AttachmentKind),
             },
+        )
+
+    @app.get("/projects/export")
+    def export_projects(
+        request: Request,
+        session: Annotated[Session, Depends(get_session)],
+        year: int | None = None,
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        overviews = list_project_overviews(session, year=year)
+        title = f"{year} 年度运维项目台账" if year else "全部年度运维项目台账"
+        filename = f"projects-{year}.xlsx" if year else "projects-all.xlsx"
+        content = build_projects_excel(overviews, title)
+        return Response(
+            content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     @app.get("/projects/new")

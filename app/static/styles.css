@@ -236,7 +236,7 @@ table {
   border-collapse: collapse;
 }
 .projects-table {
-  min-width: 1240px;
+  min-width: 1290px;
   table-layout: fixed;
 }
 th, td {
@@ -265,29 +265,40 @@ tbody tr:last-child { border-bottom: 0; }
 .projects-table td:nth-child(1) { width: 58px; }
 .projects-table th:nth-child(2),
 .projects-table td:nth-child(2) {
-  width: 158px;
-  overflow-wrap: anywhere;
+  width: 150px;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 .projects-table th:nth-child(3),
 .projects-table td:nth-child(3) { width: 82px; }
 .projects-table th:nth-child(4),
 .projects-table td:nth-child(4) { width: 86px; }
 .projects-table th:nth-child(5),
-.projects-table td:nth-child(5) { width: 122px; }
+.projects-table td:nth-child(5) { width: 104px; }
 .projects-table th:nth-child(6),
-.projects-table td:nth-child(6) { width: 250px; }
+.projects-table td:nth-child(6) { width: 300px; }
 .projects-table th:nth-child(7),
-.projects-table td:nth-child(7) { width: 382px; }
+.projects-table td:nth-child(7) { width: 410px; }
 .projects-table th:nth-child(8),
 .projects-table td:nth-child(8) { width: 100px; }
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(2, max-content);
+  grid-template-columns: repeat(4, max-content);
   gap: 4px;
   align-content: center;
 }
+.projects-table .status-grid {
+  align-items: center;
+  white-space: nowrap;
+}
 .panel-head .status-grid { justify-content: end; }
+.contract-period {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
 
 .pill {
   display: inline-flex;
@@ -304,7 +315,10 @@ tbody tr:last-child { border-bottom: 0; }
   margin: 2px 3px 2px 0;
   white-space: nowrap;
 }
-.projects-table .status-grid .pill { min-width: 72px; }
+.projects-table .status-grid .pill {
+  min-width: 66px;
+  margin: 0;
+}
 .pill.ok {
   background: var(--green-soft);
   border-color: #cbdcce;
@@ -393,9 +407,9 @@ input[type="file"] {
 }
 .attachment-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(118px, 1fr));
+  grid-template-columns: repeat(3, minmax(128px, 1fr));
   gap: 4px;
-  min-width: 360px;
+  min-width: 390px;
 }
 .attachment-type {
   border: 1px solid #dfe5dc;

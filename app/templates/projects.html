@@ -30,7 +30,11 @@
         <td><a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a></td>
         <td>{{ item.project.budget_amount or "-" }}</td>
         <td>{{ item.project.contract_amount or "-" }}</td>
-        <td>{% if item.project.contract_start and item.project.contract_end %}{{ item.project.contract_start }} 至 {{ item.project.contract_end }}{% else %}-{% endif %}</td>
+        <td>
+          {% if item.project.contract_start and item.project.contract_end %}
+          <span class="contract-period"><span>{{ item.project.contract_start }} 至</span><span>{{ item.project.contract_end }}</span></span>
+          {% else %}-{% endif %}
+        </td>
         <td>{% include "_status.html" %}</td>
         <td>
           <div class="attachment-summary">

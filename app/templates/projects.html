@@ -6,7 +6,18 @@
     <h1>项目台账</h1>
     <p>{% if year %}{{ year }} 年{% else %}全部年度{% endif %}</p>
   </div>
-  <a class="button" href="/projects/new">新增项目</a>
+  <div class="toolbar-actions">
+    <form method="get" action="/projects" class="inline-filter">
+      <label>年度筛选</label>
+      <select name="year" onchange="this.form.submit()">
+        <option value="">全部年度</option>
+        {% for item_year in years %}
+        <option value="{{ item_year }}" {% if year == item_year %}selected{% endif %}>{{ item_year }} 年</option>
+        {% endfor %}
+      </select>
+    </form>
+    <a class="button" href="/projects/new">新增项目</a>
+  </div>
 </section>
 <section class="panel">
   <table class="projects-table">

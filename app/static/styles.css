@@ -48,6 +48,22 @@ nav a { color: #394150; }
   align-items: end;
   margin-bottom: 22px;
 }
+.toolbar-actions {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.inline-filter {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+.inline-filter label {
+  color: var(--muted);
+  font-size: 12px;
+}
 h1, h2 { margin: 0; letter-spacing: 0; }
 h1 { font-size: 28px; }
 h2 { font-size: 18px; }

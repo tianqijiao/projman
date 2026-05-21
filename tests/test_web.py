@@ -114,3 +114,28 @@ def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
     assert "盖章合同.pdf" in response.text
     assert "发票.pdf" in response.text
     assert 'href="/attachments/' in response.text
+
+
+def test_project_list_can_filter_by_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "2027 年项目", "budget_amount": "100"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2028", "name": "2028 年项目", "budget_amount": "200"},
+    )
+
+    all_response = client.get("/projects")
+    filtered_response = client.get("/projects?year=2027")
+
+    assert all_response.status_code == 200
+    assert 'name="year"' in all_response.text
+    assert '<option value="">全部年度</option>' in all_response.text
+    assert '<option value="2027"' in all_response.text
+    assert '<option value="2028"' in all_response.text
+    assert "2027 年项目" in filtered_response.text
+    assert "2028 年项目" not in filtered_response.text
+    assert '<option value="2027" selected>2027 年</option>' in filtered_response.text

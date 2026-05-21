@@ -157,6 +157,7 @@ def create_app(
             {
                 "overviews": overviews,
                 "year": year,
+                "years": _project_years(session),
                 "attachment_kinds": list(AttachmentKind),
             },
         )
@@ -292,6 +293,10 @@ def _available_years(session: Session, selected_year: int) -> list[int]:
     for project in session.exec(select_projects_by_year()):
         years.add(project.year)
     return sorted(years, reverse=True)
+
+
+def _project_years(session: Session) -> list[int]:
+    return sorted({project.year for project in session.exec(select_projects_by_year())}, reverse=True)
 
 
 def select_projects_by_year():

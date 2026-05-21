@@ -161,12 +161,12 @@ tr:last-child td { border-bottom: 0; }
 .pill {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
   background: #eef1f5;
   color: #4c5563;
-  font-size: 12px;
+  font-size: 13px;
   margin: 2px 3px 2px 0;
   white-space: nowrap;
 }

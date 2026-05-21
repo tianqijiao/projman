@@ -34,6 +34,18 @@ def test_dashboard_requires_login(tmp_path):
     assert response.headers["location"] == "/login"
 
 
+def test_project_list_is_first_navigation_item(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.get("/projects")
+
+    assert response.status_code == 200
+    assert response.text.index('href="/projects">项目台账') < response.text.index(
+        'href="/">年度看板'
+    )
+
+
 def test_login_create_project_and_show_it_on_dashboard(tmp_path):
     client = make_client(tmp_path)
     login(client)

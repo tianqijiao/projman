@@ -10,6 +10,7 @@ from app.services import (
     DashboardSummary,
     create_project,
     dashboard_summary,
+    delete_project,
     get_int_setting,
     list_annual_project_overviews,
     save_annual_attachment_bytes,
@@ -374,6 +375,56 @@ def test_legacy_project_acceptance_and_invoice_count_for_first_execution(engine,
         assert overview.status.paid
         assert session.exec(select(AnnualExecution)).one().year == 2027
         assert session.exec(select(AnnualAttachment)).all() == []
+
+
+def test_delete_project_removes_cross_year_records_and_attachment_files(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="待删除跨年项目",
+            budget_amount=60000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=60000,
+            contract_start=date(2027, 1, 1),
+            contract_end=date(2028, 12, 31),
+        )
+        project_attachment = save_attachment_bytes(
+            session,
+            project=project,
+            data_dir=tmp_path,
+            kind=AttachmentKind.SIGNED_CONTRACT,
+            original_filename="盖章合同.pdf",
+            content=b"%PDF-1.7 fake",
+        )
+        executions = sync_annual_executions(session, project)
+        annual_attachments = [
+            save_annual_attachment_bytes(
+                session,
+                execution=execution,
+                data_dir=tmp_path,
+                kind=AttachmentKind.ACCEPTANCE,
+                original_filename=f"{execution.year}验收单.pdf",
+                content=b"%PDF-1.7 fake",
+            )
+            for execution in executions
+        ]
+        stored_files = [
+            tmp_path / project_attachment.stored_path,
+            *(tmp_path / attachment.stored_path for attachment in annual_attachments),
+        ]
+
+        deleted = delete_project(session, project.id, data_dir=tmp_path)
+
+        assert deleted
+        assert session.get(Project, project.id) is None
+        assert session.exec(select(Attachment)).all() == []
+        assert session.exec(select(AnnualExecution)).all() == []
+        assert session.exec(select(AnnualAttachment)).all() == []
+        assert all(not path.exists() for path in stored_files)
 
 
 def test_int_setting_returns_default_then_persists_update(engine):

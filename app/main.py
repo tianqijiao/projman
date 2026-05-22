@@ -23,6 +23,7 @@ from app.services import (
     annual_project_overview,
     create_project,
     dashboard_summary,
+    delete_project as delete_project_record,
     filter_project_overviews,
     format_money,
     get_int_setting,
@@ -186,6 +187,7 @@ def create_app(
                 "status_filter": selected_status,
                 "status_filter_options": STATUS_FILTER_OPTIONS,
                 "ledger_summary": summarize_project_overviews(overviews),
+                "project_detail_url": _project_detail_url,
                 "export_url": _build_project_url(
                     "/projects/export",
                     year=selected_year,
@@ -316,6 +318,8 @@ def create_app(
         project_id: int,
         session: Annotated[Session, Depends(get_session)],
         return_year: str | None = None,
+        q: str | None = None,
+        status: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -324,6 +328,8 @@ def create_app(
             return RedirectResponse("/projects", status_code=303)
         overview = project_overview(session, project)
         selected_return_year = _normalize_return_year(return_year)
+        return_query = (q or "").strip()
+        return_status = normalize_status_filter(status)
         back_year = selected_return_year or overview.project.year
         annual_overviews = [
             annual_project_overview(session, execution)
@@ -338,11 +344,13 @@ def create_app(
                 "project_attachment_kinds": PROJECT_ATTACHMENT_KINDS,
                 "annual_attachment_kinds": ANNUAL_ATTACHMENT_KINDS,
                 "return_year": selected_return_year,
+                "return_query": return_query,
+                "return_status": return_status,
                 "back_to_projects_url": _build_project_url(
                     "/projects",
                     year=back_year,
-                    q="",
-                    status="",
+                    q=return_query,
+                    status=return_status,
                 ),
                 "money": format_money,
             },
@@ -363,6 +371,8 @@ def create_app(
         payment_date: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
         return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -381,7 +391,33 @@ def create_app(
         )
         sync_annual_executions(session, project)
         return RedirectResponse(
-            _project_detail_url(project_id, return_year),
+            _project_detail_url(project_id, return_year, q=q, status=status),
+            status_code=303,
+        )
+
+    @app.post("/projects/{project_id}/delete")
+    def delete_project_route(
+        request: Request,
+        project_id: int,
+        session: Annotated[Session, Depends(get_session)],
+        return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        project = session.get(Project, project_id)
+        back_year = _normalize_return_year(return_year)
+        if project is not None and back_year is None:
+            back_year = project.year
+        delete_project_record(session, project_id, data_dir=app.state.data_dir)
+        return RedirectResponse(
+            _build_project_url(
+                "/projects",
+                year=back_year,
+                q=q.strip(),
+                status=normalize_status_filter(status),
+            ),
             status_code=303,
         )
 
@@ -397,6 +433,8 @@ def create_app(
         payment_date: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
         return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -414,7 +452,7 @@ def create_app(
             notes=notes.strip(),
         )
         return RedirectResponse(
-            _project_detail_url(execution.project_id, return_year),
+            _project_detail_url(execution.project_id, return_year, q=q, status=status),
             status_code=303,
         )
 
@@ -426,6 +464,8 @@ def create_app(
         kind: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
         return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -442,7 +482,7 @@ def create_app(
             content=content,
         )
         return RedirectResponse(
-            _project_detail_url(execution.project_id, return_year),
+            _project_detail_url(execution.project_id, return_year, q=q, status=status),
             status_code=303,
         )
 
@@ -497,6 +537,8 @@ def create_app(
         kind: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
         return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -513,7 +555,7 @@ def create_app(
             content=content,
         )
         return RedirectResponse(
-            _project_detail_url(project_id, return_year),
+            _project_detail_url(project_id, return_year, q=q, status=status),
             status_code=303,
         )
 
@@ -728,11 +770,24 @@ def _normalize_return_year(value: str | int | None) -> int | None:
         return None
 
 
-def _project_detail_url(project_id: int, return_year: str | int | None = None) -> str:
+def _project_detail_url(
+    project_id: int,
+    return_year: str | int | None = None,
+    *,
+    q: str = "",
+    status: str = "",
+) -> str:
+    params: dict[str, str | int] = {}
     year = _normalize_return_year(return_year)
-    if year is None:
-        return f"/projects/{project_id}"
-    return f"/projects/{project_id}?{urlencode({'return_year': year})}"
+    if year is not None:
+        params["return_year"] = year
+    if q.strip():
+        params["q"] = q.strip()
+    normalized_status = normalize_status_filter(status)
+    if normalized_status:
+        params["status"] = normalized_status
+    query_string = urlencode(params)
+    return f"/projects/{project_id}?{query_string}" if query_string else f"/projects/{project_id}"
 
 
 def _build_project_url(

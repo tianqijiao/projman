@@ -115,6 +115,41 @@ def update_project(session: Session, project_id: int, **changes: Any) -> Project
     return project
 
 
+def delete_project(session: Session, project_id: int, *, data_dir: Path) -> bool:
+    project = session.get(Project, project_id)
+    if project is None:
+        return False
+
+    annual_executions = sync_annual_executions(session, project)
+    project_attachments = list(
+        session.exec(select(Attachment).where(Attachment.project_id == project_id))
+    )
+    annual_attachments = [
+        attachment
+        for execution in annual_executions
+        for attachment in session.exec(
+            select(AnnualAttachment).where(AnnualAttachment.execution_id == execution.id)
+        )
+    ]
+    stored_paths = [
+        attachment.stored_path
+        for attachment in [*project_attachments, *annual_attachments]
+    ]
+
+    for attachment in annual_attachments:
+        session.delete(attachment)
+    for attachment in project_attachments:
+        session.delete(attachment)
+    for execution in annual_executions:
+        session.delete(execution)
+    session.delete(project)
+    session.commit()
+
+    for stored_path in stored_paths:
+        _delete_stored_file(data_dir, stored_path)
+    return True
+
+
 def save_attachment_bytes(
     session: Session,
     *,
@@ -623,6 +658,26 @@ def _legacy_annual_attachments(
         for attachment in project_attachments
         if attachment.kind in ANNUAL_ATTACHMENT_KINDS
     ]
+
+
+def _delete_stored_file(data_dir: Path, stored_path: str) -> None:
+    base_dir = data_dir.resolve()
+    file_path = (data_dir / stored_path).resolve()
+    try:
+        file_path.relative_to(base_dir)
+    except ValueError:
+        return
+
+    if file_path.is_file():
+        file_path.unlink()
+
+    parent = file_path.parent
+    while parent != base_dir and parent.exists():
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
 
 
 def _compute_annual_status(

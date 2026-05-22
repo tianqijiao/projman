@@ -41,17 +41,13 @@
     <div><span>{{ ledger_summary.incomplete_count }}</span><label>待补资料</label></div>
   </div>
   <table class="projects-table">
-    <thead><tr><th>年度</th><th>项目</th><th class="money-head">预算(元)</th><th class="money-head">合同金额(元)</th><th>合同期</th><th>状态</th><th>附件</th><th>下载</th></tr></thead>
+    <thead><tr><th>年度</th><th>项目</th><th class="money-head">预算(元)</th><th class="money-head">合同金额(元)</th><th>合同期</th><th>状态</th><th>附件</th><th>下载</th><th>操作</th></tr></thead>
     <tbody>
       {% for item in overviews %}
       <tr class="{% if item.execution.contract_only %}contract-only-row{% endif %}">
         <td>{{ item.execution.year }}</td>
         <td>
-          {% set detail_url = "/projects/" ~ item.project.id %}
-          {% if year %}
-          {% set detail_url = detail_url ~ "?return_year=" ~ year %}
-          {% endif %}
-          <a href="{{ detail_url }}">{{ item.project.name }}</a>
+          <a href="{{ project_detail_url(item.project.id, return_year=year, q=query, status=status_filter) }}">{{ item.project.name }}</a>
           {% if item.execution.contract_only %}<span class="row-note">合同管理年</span>{% endif %}
         </td>
         <td class="money-cell {% if item.execution.contract_only or item.execution.budget_amount is none %}empty-value{% endif %}">
@@ -113,10 +109,24 @@
           <span class="button compact-button disabled">暂无附件</span>
           {% endif %}
         </td>
+        <td class="action-cell">
+          {% set delete_message = "确定删除项目“" ~ item.project.name ~ "”？这会删除所有年度信息和附件，无法恢复。" %}
+          <form
+            method="post"
+            action="/projects/{{ item.project.id }}/delete"
+            class="inline-delete-form"
+            onsubmit='return confirm({{ delete_message | tojson }});'
+          >
+            {% if year %}<input type="hidden" name="return_year" value="{{ year }}">{% endif %}
+            {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+            {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+            <button class="compact-button danger-button ghost-danger" type="submit">删除</button>
+          </form>
+        </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="8" class="empty-row">没有找到符合条件的项目。</td>
+        <td colspan="9" class="empty-row">没有找到符合条件的项目。</td>
       </tr>
       {% endfor %}
     </tbody>

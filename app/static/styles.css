@@ -276,7 +276,7 @@ table {
   font-size: 12px;
 }
 .projects-table {
-  min-width: 1290px;
+  min-width: 1280px;
   table-layout: fixed;
 }
 th, td {
@@ -312,9 +312,17 @@ tbody tr.contract-only-row:hover {
 .projects-table td:nth-child(1) { width: 58px; }
 .projects-table th:nth-child(2),
 .projects-table td:nth-child(2) {
-  width: 150px;
+  width: 128px;
   word-break: keep-all;
   overflow-wrap: normal;
+}
+.projects-table td:nth-child(2) a {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 .projects-table th:nth-child(3),
 .projects-table td:nth-child(3) { width: 82px; }
@@ -326,11 +334,13 @@ tbody tr.contract-only-row:hover {
 .projects-table th:nth-child(5),
 .projects-table td:nth-child(5) { width: 104px; }
 .projects-table th:nth-child(6),
-.projects-table td:nth-child(6) { width: 300px; }
+.projects-table td:nth-child(6) { width: 250px; }
 .projects-table th:nth-child(7),
-.projects-table td:nth-child(7) { width: 410px; }
+.projects-table td:nth-child(7) { width: 400px; }
 .projects-table th:nth-child(8),
-.projects-table td:nth-child(8) { width: 108px; }
+.projects-table td:nth-child(8) { width: 92px; }
+.projects-table th:nth-child(9),
+.projects-table td:nth-child(9) { width: 74px; }
 
 .status-grid {
   display: grid;
@@ -459,6 +469,39 @@ tbody tr.contract-only-row:hover {
   justify-content: flex-end;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+.danger-zone {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  border-color: rgba(142, 54, 46, 0.34);
+  background: #fffdfb;
+}
+.danger-zone p { margin: 4px 0 0; }
+.danger-button {
+  background: var(--red);
+  border-color: var(--red);
+}
+.danger-button:hover {
+  background: #6f2923;
+}
+.ghost-danger {
+  background: #fffdfb;
+  color: var(--red);
+  border-color: rgba(142, 54, 46, 0.38);
+}
+.ghost-danger:hover {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.inline-delete-form {
+  display: flex;
+  justify-content: center;
+}
+.action-cell {
+  text-align: center;
 }
 
 .upload-row {
@@ -764,6 +807,11 @@ input[type="file"] {
     text-align: left;
   }
   .upload-row, .attachment-list li { grid-template-columns: 1fr; }
+  .danger-zone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .danger-zone .danger-button { width: 100%; }
   h1 { font-size: 25px; }
 }
 

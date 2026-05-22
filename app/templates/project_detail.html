@@ -21,6 +21,8 @@
     <div class="panel-head"><h2>项目主档</h2></div>
     <form method="post" action="/projects/{{ overview.project.id }}/edit" class="form-grid">
       {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+      {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+      {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
       <label>建档/签约年度<input name="year" type="number" value="{{ overview.project.year }}" required></label>
       <label>项目名称<input name="name" value="{{ overview.project.name }}" required></label>
       <label>项目预算总额<input name="budget_amount" type="number" step="0.01" value="{{ overview.project.budget_amount or '' }}"></label>
@@ -36,6 +38,8 @@
     <div class="panel-head"><h2>项目级 PDF 附件</h2></div>
     <form method="post" action="/projects/{{ overview.project.id }}/attachments" enctype="multipart/form-data" class="upload-row">
       {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+      {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+      {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
       <select name="kind">
         {% for kind in project_attachment_kinds %}
         <option value="{{ kind.value }}">{{ kind.label }}</option>
@@ -90,6 +94,8 @@
 
       <form method="post" action="/annual-executions/{{ item.execution.id }}/edit" class="form-grid annual-form">
         {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+        {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+        {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
         <label>年度预算<input name="budget_amount" type="number" step="0.01" value="{{ item.execution.budget_amount or '' }}"></label>
         <label>年度合同<input name="contract_amount" type="number" step="0.01" value="{{ item.execution.contract_amount or '' }}"></label>
         <label>验收日期<input name="acceptance_date" type="date" value="{{ item.execution.acceptance_date or '' }}"></label>
@@ -104,6 +110,8 @@
         {% for kind in annual_attachment_kinds %}
         <form method="post" action="/annual-executions/{{ item.execution.id }}/attachments" enctype="multipart/form-data" class="upload-row compact-upload">
           {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+          {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+          {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
           <input type="hidden" name="kind" value="{{ kind.value }}">
           <label>{{ kind.label }}<input name="file" type="file" accept="application/pdf,.pdf" required></label>
           <button type="submit">上传</button>
@@ -138,5 +146,23 @@
     </article>
     {% endfor %}
   </div>
+</section>
+
+<section class="panel danger-zone">
+  <div>
+    <h2>删除项目</h2>
+    <p>删除后将同时清理项目主档、所有年度执行信息和全部 PDF 附件，无法恢复。</p>
+  </div>
+  {% set delete_message = "确定删除项目“" ~ overview.project.name ~ "”？这会删除所有年度信息和附件，无法恢复。" %}
+  <form
+    method="post"
+    action="/projects/{{ overview.project.id }}/delete"
+    onsubmit='return confirm({{ delete_message | tojson }});'
+  >
+    {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+    {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+    {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
+    <button class="danger-button" type="submit">删除项目</button>
+  </form>
 </section>
 {% endblock %}

@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from sqlmodel import Session, select
 
 from app.main import create_app
-from app.models import AnnualAttachment, AnnualExecution
+from app.models import AnnualAttachment, AnnualExecution, Project
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -525,6 +525,46 @@ def test_project_detail_back_link_preserves_ledger_year_filter(tmp_path):
     assert 'href="/projects?year=2026"' in detail_response.text
 
 
+def test_project_detail_delete_preserves_full_ledger_filter_context(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "筛选删除项目", "budget_amount": "30000"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "筛选保留项目", "budget_amount": "20000"},
+    )
+
+    ledger_response = client.get("/projects?year=2027&q=删除&status=incomplete")
+    detail_response = client.get(
+        "/projects/1?return_year=2027&q=删除&status=incomplete"
+    )
+    delete_response = client.post(
+        "/projects/1/delete",
+        data={"return_year": "2027", "q": "删除", "status": "incomplete"},
+        follow_redirects=False,
+    )
+
+    assert ledger_response.status_code == 200
+    assert (
+        'href="/projects/1?return_year=2027&amp;q=%E5%88%A0%E9%99%A4&amp;status=incomplete"'
+        in ledger_response.text
+    )
+    assert detail_response.status_code == 200
+    assert (
+        'href="/projects?year=2027&amp;q=%E5%88%A0%E9%99%A4&amp;status=incomplete"'
+        in detail_response.text
+    )
+    assert 'name="q" value="删除"' in detail_response.text
+    assert 'name="status" value="incomplete"' in detail_response.text
+    assert (
+        delete_response.headers["location"]
+        == "/projects?year=2027&q=%E5%88%A0%E9%99%A4&status=incomplete"
+    )
+
+
 def test_project_detail_save_redirect_preserves_return_year(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -635,6 +675,71 @@ def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     assert "62,000.00" in updated_response.text
     assert "2027验收单.pdf" in updated_response.text
     assert "2027发票.pdf" in updated_response.text
+
+
+def test_project_detail_can_delete_project_after_confirmation(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "待删除项目", "budget_amount": "30000"},
+    )
+
+    detail_response = client.get("/projects/1?return_year=2027")
+    delete_response = client.post(
+        "/projects/1/delete",
+        data={"return_year": "2027"},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        deleted_project = session.get(Project, 1)
+
+    assert detail_response.status_code == 200
+    assert "onsubmit=" in detail_response.text
+    assert "return confirm(" in detail_response.text
+    assert "删除项目" in detail_response.text
+    assert delete_response.status_code == 303
+    assert delete_response.headers["location"] == "/projects?year=2027"
+    assert deleted_project is None
+
+
+def test_project_ledger_can_delete_project_and_keep_filters(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "台账删除项目", "budget_amount": "30000"},
+    )
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "保留项目", "budget_amount": "20000"},
+    )
+
+    ledger_response = client.get("/projects?year=2027&q=删除&status=incomplete")
+    delete_response = client.post(
+        "/projects/1/delete",
+        data={"return_year": "2027", "q": "删除", "status": "incomplete"},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        deleted_project = session.get(Project, 1)
+        remaining_projects = session.exec(select(Project)).all()
+
+    assert ledger_response.status_code == 200
+    assert "<th>操作</th>" in ledger_response.text
+    assert 'action="/projects/1/delete"' in ledger_response.text
+    assert "return confirm(" in ledger_response.text
+    assert 'name="return_year" value="2027"' in ledger_response.text
+    assert 'name="q" value="删除"' in ledger_response.text
+    assert 'name="status" value="incomplete"' in ledger_response.text
+    assert "删除" in ledger_response.text
+    assert delete_response.status_code == 303
+    assert (
+        delete_response.headers["location"]
+        == "/projects?year=2027&q=%E5%88%A0%E9%99%A4&status=incomplete"
+    )
+    assert deleted_project is None
+    assert [project.name for project in remaining_projects] == ["保留项目"]
 
 
 def test_manual_contract_management_checkbox_updates_ledger(tmp_path):

@@ -71,6 +71,12 @@ class ProjectLedgerSummary:
     incomplete_count: int
 
 
+@dataclass(frozen=True)
+class DeletedAttachment:
+    project_id: int
+    execution_id: int | None = None
+
+
 STATUS_FILTER_OPTIONS = [
     ("", "全部状态"),
     ("unsigned_contract", "未签合同"),
@@ -120,7 +126,7 @@ def delete_project(session: Session, project_id: int, *, data_dir: Path) -> bool
     if project is None:
         return False
 
-    annual_executions = sync_annual_executions(session, project)
+    annual_executions = sync_annual_executions(session, project, data_dir=data_dir)
     project_attachments = list(
         session.exec(select(Attachment).where(Attachment.project_id == project_id))
     )
@@ -148,6 +154,23 @@ def delete_project(session: Session, project_id: int, *, data_dir: Path) -> bool
     for stored_path in stored_paths:
         _delete_stored_file(data_dir, stored_path)
     return True
+
+
+def delete_attachment(
+    session: Session,
+    attachment_id: int,
+    *,
+    data_dir: Path,
+) -> DeletedAttachment | None:
+    attachment = session.get(Attachment, attachment_id)
+    if attachment is None:
+        return None
+    deleted = DeletedAttachment(project_id=attachment.project_id)
+    stored_path = attachment.stored_path
+    session.delete(attachment)
+    session.commit()
+    _delete_stored_file(data_dir, stored_path)
+    return deleted
 
 
 def save_attachment_bytes(
@@ -205,7 +228,12 @@ def project_overview(session: Session, project: Project) -> ProjectOverview:
     )
 
 
-def sync_annual_executions(session: Session, project: Project) -> list[AnnualExecution]:
+def sync_annual_executions(
+    session: Session,
+    project: Project,
+    *,
+    data_dir: Path | None = None,
+) -> list[AnnualExecution]:
     target_years = _execution_years(project)
     normal_years = _contract_service_years(project) or {project.year}
     existing = {
@@ -218,11 +246,9 @@ def sync_annual_executions(session: Session, project: Project) -> list[AnnualExe
         execution
         for year, execution in existing.items()
         if year not in target_years
-        and execution.contract_only
-        and not execution.manual_amounts
     ]
     for execution in stale_executions:
-        session.delete(execution)
+        _delete_annual_execution(session, execution, data_dir=data_dir)
 
     effective_contract_only_by_year = {
         year: (
@@ -371,6 +397,29 @@ def save_annual_attachment_bytes(
     return attachment
 
 
+def delete_annual_attachment(
+    session: Session,
+    attachment_id: int,
+    *,
+    data_dir: Path,
+) -> DeletedAttachment | None:
+    attachment = session.get(AnnualAttachment, attachment_id)
+    if attachment is None:
+        return None
+    execution = session.get(AnnualExecution, attachment.execution_id)
+    if execution is None:
+        return None
+    deleted = DeletedAttachment(
+        project_id=execution.project_id,
+        execution_id=execution.id,
+    )
+    stored_path = attachment.stored_path
+    session.delete(attachment)
+    session.commit()
+    _delete_stored_file(data_dir, stored_path)
+    return deleted
+
+
 def annual_project_overview(
     session: Session,
     execution: AnnualExecution,
@@ -435,12 +484,13 @@ def annual_project_overview(
 def list_annual_project_overviews(
     session: Session,
     year: int | None = None,
+    data_dir: Path | None = None,
 ) -> list[AnnualProjectOverview]:
     projects = list(
         session.exec(select(Project).order_by(Project.year.desc(), Project.id.desc()))
     )
     for project in projects:
-        sync_annual_executions(session, project)
+        sync_annual_executions(session, project, data_dir=data_dir)
     statement = select(AnnualExecution).order_by(
         AnnualExecution.year.desc(),
         AnnualExecution.project_id.desc(),
@@ -508,8 +558,9 @@ def dashboard_summary(
     year: int,
     today: date,
     renewal_lead_days: int,
+    data_dir: Path | None = None,
 ) -> DashboardSummary:
-    projects = list_annual_project_overviews(session, year=year)
+    projects = list_annual_project_overviews(session, year=year, data_dir=data_dir)
     renewal_due = [
         item
         for item in projects
@@ -658,6 +709,25 @@ def _legacy_annual_attachments(
         for attachment in project_attachments
         if attachment.kind in ANNUAL_ATTACHMENT_KINDS
     ]
+
+
+def _delete_annual_execution(
+    session: Session,
+    execution: AnnualExecution,
+    *,
+    data_dir: Path | None = None,
+) -> None:
+    annual_attachments = list(
+        session.exec(
+            select(AnnualAttachment).where(AnnualAttachment.execution_id == execution.id)
+        )
+    )
+    for attachment in annual_attachments:
+        stored_path = attachment.stored_path
+        session.delete(attachment)
+        if data_dir is not None:
+            _delete_stored_file(data_dir, stored_path)
+    session.delete(execution)
 
 
 def _delete_stored_file(data_dir: Path, stored_path: str) -> None:

@@ -531,7 +531,7 @@ input[type="file"] {
 }
 .attachment-list li {
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr) 122px;
+  grid-template-columns: 130px minmax(0, 1fr) 122px auto;
   gap: 10px;
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
@@ -628,6 +628,29 @@ input[type="file"] {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 12px;
+}
+.attachment-actions {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.attachment-delete-form {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.danger-link {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--red);
+  font-weight: 700;
+}
+.danger-link:hover {
+  background: transparent;
+  color: #6f2923;
+  text-decoration: underline;
 }
 .compact-button {
   min-height: 27px;

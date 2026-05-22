@@ -9,6 +9,8 @@ from app.services import (
     AnnualProjectOverview,
     DashboardSummary,
     create_project,
+    delete_annual_attachment,
+    delete_attachment,
     dashboard_summary,
     delete_project,
     get_int_setting,
@@ -87,6 +89,50 @@ def test_save_attachment_rejects_non_pdf(engine, tmp_path):
                 original_filename="发票.docx",
                 content=b"not a pdf",
             )
+
+
+def test_delete_attachment_removes_record_and_file(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="附件删除项目")
+        attachment = save_attachment_bytes(
+            session,
+            project=project,
+            data_dir=tmp_path,
+            kind=AttachmentKind.PROCUREMENT_BASIS,
+            original_filename="错误采购依据.pdf",
+            content=b"%PDF-1.7 fake",
+        )
+        stored_file = tmp_path / attachment.stored_path
+
+        deleted = delete_attachment(session, attachment.id, data_dir=tmp_path)
+
+        assert deleted is not None
+        assert deleted.project_id == project.id
+        assert session.get(Attachment, attachment.id) is None
+        assert not stored_file.exists()
+
+
+def test_delete_annual_attachment_removes_record_and_file(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="年度附件删除项目")
+        execution = sync_annual_executions(session, project)[0]
+        attachment = save_annual_attachment_bytes(
+            session,
+            execution=execution,
+            data_dir=tmp_path,
+            kind=AttachmentKind.ACCEPTANCE,
+            original_filename="错误验收单.pdf",
+            content=b"%PDF-1.7 fake",
+        )
+        stored_file = tmp_path / attachment.stored_path
+
+        deleted = delete_annual_attachment(session, attachment.id, data_dir=tmp_path)
+
+        assert deleted is not None
+        assert deleted.project_id == project.id
+        assert deleted.execution_id == execution.id
+        assert session.get(AnnualAttachment, attachment.id) is None
+        assert not stored_file.exists()
 
 
 def test_dashboard_summary_counts_open_work_and_renewal_alerts(engine, tmp_path):
@@ -209,6 +255,42 @@ def test_sync_annual_executions_does_not_create_post_contract_management_year(en
             (2027, False),
         ]
         assert session.get(AnnualExecution, stale.id) is None
+
+
+def test_sync_annual_executions_removes_years_outside_edited_contract_period(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="合同期改短项目",
+            budget_amount=300000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=300000,
+            contract_start=date(2027, 1, 1),
+            contract_end=date(2029, 12, 31),
+        )
+        executions = sync_annual_executions(session, project)
+        stale_execution = next(item for item in executions if item.year == 2029)
+        stale_attachment = save_annual_attachment_bytes(
+            session,
+            execution=stale_execution,
+            data_dir=tmp_path,
+            kind=AttachmentKind.ACCEPTANCE,
+            original_filename="2029验收单.pdf",
+            content=b"%PDF-1.7 fake",
+        )
+        stored_file = tmp_path / stale_attachment.stored_path
+
+        update_project(session, project.id, contract_end=date(2028, 12, 31))
+        refreshed = sync_annual_executions(session, project, data_dir=tmp_path)
+
+        assert [item.year for item in refreshed] == [2027, 2028]
+        assert session.get(AnnualExecution, stale_execution.id) is None
+        assert session.get(AnnualAttachment, stale_attachment.id) is None
+        assert not stored_file.exists()
 
 
 def test_cross_year_contract_first_service_year_is_payable_execution_year(engine):

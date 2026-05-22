@@ -83,10 +83,10 @@
                 {% for attachment in files %}
                 <li>
                   {% if attachment.execution_id is defined %}
-                  <a href="/annual-attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+                  <a href="{{ return_context_url('/annual-attachments/' ~ attachment.id ~ '/preview', year, q=query, status=status_filter) }}">{{ attachment.original_filename }}</a>
                   <a class="mini-link" href="/annual-attachments/{{ attachment.id }}/download">下载</a>
                   {% else %}
-                  <a href="/attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
+                  <a href="{{ return_context_url('/attachments/' ~ attachment.id ~ '/preview', year, q=query, status=status_filter) }}">{{ attachment.original_filename }}</a>
                   <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
                   {% endif %}
                 </li>

@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from sqlmodel import Session, select
 
 from app.main import create_app
-from app.models import AnnualAttachment, AnnualExecution, Project
+from app.models import AnnualAttachment, AnnualExecution, Attachment, Project
 
 
 def make_client(tmp_path: Path) -> TestClient:
@@ -186,6 +186,76 @@ def test_attachment_preview_download_and_download_all(tmp_path):
         names = attachments_zip.namelist()
         assert any(name.endswith("采购依据.pdf") for name in names)
         assert any(name.endswith("发票.pdf") for name in names)
+
+
+def test_project_attachment_can_be_deleted_from_detail_and_preview(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "附件误传项目", "budget_amount": "50000"},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "procurement_basis"},
+        files={"file": ("错误采购依据.pdf", b"%PDF-1.7 fake basis", "application/pdf")},
+    )
+    with Session(client.app.state.engine) as session:
+        attachment = session.exec(select(Attachment)).one()
+        stored_path = tmp_path / "data" / attachment.stored_path
+
+    detail_response = client.get("/projects/1?return_year=2027&q=误传&status=incomplete")
+    preview_response = client.get(
+        "/attachments/1/preview?return_year=2027&q=误传&status=incomplete"
+    )
+    delete_response = client.post(
+        "/attachments/1/delete",
+        data={"return_year": "2027", "q": "误传", "status": "incomplete"},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        deleted_attachment = session.get(Attachment, 1)
+
+    assert detail_response.status_code == 200
+    assert 'action="/attachments/1/delete"' in detail_response.text
+    assert "return confirm(" in detail_response.text
+    assert preview_response.status_code == 200
+    assert 'action="/attachments/1/delete"' in preview_response.text
+    assert delete_response.status_code == 303
+    assert (
+        delete_response.headers["location"]
+        == "/projects/1?return_year=2027&q=%E8%AF%AF%E4%BC%A0&status=incomplete"
+    )
+    assert deleted_attachment is None
+    assert not stored_path.exists()
+
+
+def test_ledger_attachment_preview_links_preserve_filter_context(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "附件筛选项目", "budget_amount": "50000"},
+    )
+    client.post(
+        "/projects/1/attachments",
+        data={"kind": "procurement_basis"},
+        files={"file": ("采购依据.pdf", b"%PDF-1.7 fake basis", "application/pdf")},
+    )
+
+    ledger_response = client.get("/projects?year=2027&q=附件&status=incomplete")
+    preview_response = client.get(
+        "/attachments/1/preview?return_year=2027&q=附件&status=incomplete"
+    )
+
+    assert (
+        'href="/attachments/1/preview?return_year=2027&amp;q=%E9%99%84%E4%BB%B6&amp;status=incomplete"'
+        in ledger_response.text
+    )
+    assert (
+        'href="/projects/1?return_year=2027&amp;q=%E9%99%84%E4%BB%B6&amp;status=incomplete"'
+        in preview_response.text
+    )
 
 
 def test_project_list_can_filter_by_year(tmp_path):
@@ -675,6 +745,50 @@ def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     assert "62,000.00" in updated_response.text
     assert "2027验收单.pdf" in updated_response.text
     assert "2027发票.pdf" in updated_response.text
+
+
+def test_annual_attachment_can_be_deleted_from_detail_and_preview(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度附件误传项目", "budget_amount": "60000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+    client.post(
+        f"/annual-executions/{execution.id}/attachments",
+        data={"kind": "acceptance"},
+        files={"file": ("错误验收单.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    with Session(client.app.state.engine) as session:
+        attachment = session.exec(select(AnnualAttachment)).one()
+        stored_path = tmp_path / "data" / attachment.stored_path
+
+    detail_response = client.get("/projects/1?return_year=2027&q=误传&status=incomplete")
+    preview_response = client.get(
+        "/annual-attachments/1/preview?return_year=2027&q=误传&status=incomplete"
+    )
+    delete_response = client.post(
+        "/annual-attachments/1/delete",
+        data={"return_year": "2027", "q": "误传", "status": "incomplete"},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        deleted_attachment = session.get(AnnualAttachment, 1)
+
+    assert detail_response.status_code == 200
+    assert 'action="/annual-attachments/1/delete"' in detail_response.text
+    assert "return confirm(" in detail_response.text
+    assert preview_response.status_code == 200
+    assert 'action="/annual-attachments/1/delete"' in preview_response.text
+    assert delete_response.status_code == 303
+    assert (
+        delete_response.headers["location"]
+        == "/projects/1?return_year=2027&q=%E8%AF%AF%E4%BC%A0&status=incomplete"
+    )
+    assert deleted_attachment is None
+    assert not stored_path.exists()
 
 
 def test_project_detail_can_delete_project_after_confirmation(tmp_path):

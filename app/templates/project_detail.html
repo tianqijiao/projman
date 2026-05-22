@@ -54,8 +54,20 @@
       {% for attachment in overview.attachments %}
       <li>
         <span>{{ attachment.kind.label }}</span>
-        <a href="/attachments/{{ attachment.id }}">{{ attachment.original_filename }}</a>
+        <a href="{{ return_context_url('/attachments/' ~ attachment.id ~ '/preview', return_year, q=return_query, status=return_status) }}">{{ attachment.original_filename }}</a>
         <time>{{ attachment.uploaded_at.strftime("%Y-%m-%d %H:%M") }}</time>
+        {% set delete_message = "确定删除附件“" ~ attachment.original_filename ~ "”？文件会从磁盘清除，无法恢复。" %}
+        <form
+          method="post"
+          action="/attachments/{{ attachment.id }}/delete"
+          class="attachment-delete-form"
+          onsubmit='return confirm({{ delete_message | tojson }});'
+        >
+          {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+          {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+          {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
+          <button class="compact-button ghost-danger" type="submit">删除</button>
+        </form>
       </li>
       {% endfor %}
     </ul>
@@ -125,12 +137,39 @@
         {% for attachment in annual_files %}
         <li>
           <span>{{ attachment.kind.label }}</span>
+          {% set delete_message = "确定删除附件“" ~ attachment.original_filename ~ "”？文件会从磁盘清除，无法恢复。" %}
           {% if attachment.execution_id is defined %}
-          <a href="/annual-attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
-          <a class="mini-link" href="/annual-attachments/{{ attachment.id }}/download">下载</a>
+          <a href="{{ return_context_url('/annual-attachments/' ~ attachment.id ~ '/preview', return_year, q=return_query, status=return_status) }}">{{ attachment.original_filename }}</a>
+          <div class="attachment-actions">
+            <a class="mini-link" href="/annual-attachments/{{ attachment.id }}/download">下载</a>
+            <form
+              method="post"
+              action="/annual-attachments/{{ attachment.id }}/delete"
+              class="attachment-delete-form"
+              onsubmit='return confirm({{ delete_message | tojson }});'
+            >
+              {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+              {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+              {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
+              <button class="mini-link danger-link" type="submit">删除</button>
+            </form>
+          </div>
           {% else %}
-          <a href="/attachments/{{ attachment.id }}/preview">{{ attachment.original_filename }}</a>
-          <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
+          <a href="{{ return_context_url('/attachments/' ~ attachment.id ~ '/preview', return_year, q=return_query, status=return_status) }}">{{ attachment.original_filename }}</a>
+          <div class="attachment-actions">
+            <a class="mini-link" href="/attachments/{{ attachment.id }}/download">下载</a>
+            <form
+              method="post"
+              action="/attachments/{{ attachment.id }}/delete"
+              class="attachment-delete-form"
+              onsubmit='return confirm({{ delete_message | tojson }});'
+            >
+              {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+              {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+              {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
+              <button class="mini-link danger-link" type="submit">删除</button>
+            </form>
+          </div>
           {% endif %}
         </li>
         {% endfor %}

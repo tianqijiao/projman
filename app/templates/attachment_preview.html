@@ -7,8 +7,20 @@
     <p>{{ attachment.kind.label }} · {{ attachment.original_filename }}</p>
   </div>
   <div class="toolbar-actions">
-    <a class="button ghost-link" href="/projects">返回台账</a>
+    <a class="button ghost-link" href="{{ back_url }}">返回项目</a>
     <a class="button" href="{{ download_url }}">下载附件</a>
+    {% set delete_message = "确定删除附件“" ~ attachment.original_filename ~ "”？文件会从磁盘清除，无法恢复。" %}
+    <form
+      method="post"
+      action="{{ delete_url }}"
+      class="inline-delete-form"
+      onsubmit='return confirm({{ delete_message | tojson }});'
+    >
+      {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
+      {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
+      {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
+      <button class="danger-button" type="submit">删除附件</button>
+    </form>
   </div>
 </section>
 <section class="panel preview-panel">

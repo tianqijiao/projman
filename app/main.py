@@ -22,6 +22,8 @@ from app.services import (
     STATUS_FILTER_OPTIONS,
     annual_project_overview,
     create_project,
+    delete_annual_attachment as delete_annual_attachment_record,
+    delete_attachment as delete_attachment_record,
     dashboard_summary,
     delete_project as delete_project_record,
     filter_project_overviews,
@@ -118,6 +120,7 @@ def create_app(
             year=selected_year,
             today=date.today(),
             renewal_lead_days=renewal_lead_days,
+            data_dir=app.state.data_dir,
         )
         years = _available_years(session, selected_year)
         return templates.TemplateResponse(
@@ -173,7 +176,11 @@ def create_app(
         query = (q or "").strip()
         selected_status = normalize_status_filter(status)
         overviews = filter_project_overviews(
-            list_annual_project_overviews(session, year=selected_year),
+            list_annual_project_overviews(
+                session,
+                year=selected_year,
+                data_dir=app.state.data_dir,
+            ),
             query=query,
             status_filter=selected_status,
         )
@@ -188,6 +195,7 @@ def create_app(
                 "status_filter_options": STATUS_FILTER_OPTIONS,
                 "ledger_summary": summarize_project_overviews(overviews),
                 "project_detail_url": _project_detail_url,
+                "return_context_url": _return_context_url,
                 "export_url": _build_project_url(
                     "/projects/export",
                     year=selected_year,
@@ -213,7 +221,11 @@ def create_app(
         selected_year = _parse_optional_year(year)
         selected_status = normalize_status_filter(status)
         overviews = filter_project_overviews(
-            list_annual_project_overviews(session, year=selected_year),
+            list_annual_project_overviews(
+                session,
+                year=selected_year,
+                data_dir=app.state.data_dir,
+            ),
             query=q,
             status_filter=selected_status,
         )
@@ -242,7 +254,11 @@ def create_app(
         if project is None:
             return RedirectResponse("/projects", status_code=303)
         attachments = project_overview(session, project).attachments
-        annual_executions = sync_annual_executions(session, project)
+        annual_executions = sync_annual_executions(
+            session,
+            project,
+            data_dir=app.state.data_dir,
+        )
         annual_attachments = [
             attachment
             for execution in annual_executions
@@ -309,7 +325,7 @@ def create_app(
             budget_amount=_parse_float(budget_amount),
             notes=notes,
         )
-        sync_annual_executions(session, project)
+        sync_annual_executions(session, project, data_dir=app.state.data_dir)
         return RedirectResponse(f"/?year={year}", status_code=303)
 
     @app.get("/projects/{project_id}")
@@ -333,7 +349,11 @@ def create_app(
         back_year = selected_return_year or overview.project.year
         annual_overviews = [
             annual_project_overview(session, execution)
-            for execution in sync_annual_executions(session, project)
+            for execution in sync_annual_executions(
+                session,
+                project,
+                data_dir=app.state.data_dir,
+            )
         ]
         return templates.TemplateResponse(
             request,
@@ -346,6 +366,7 @@ def create_app(
                 "return_year": selected_return_year,
                 "return_query": return_query,
                 "return_status": return_status,
+                "return_context_url": _return_context_url,
                 "back_to_projects_url": _build_project_url(
                     "/projects",
                     year=back_year,
@@ -389,7 +410,7 @@ def create_app(
             payment_date=_parse_date(payment_date),
             notes=notes.strip(),
         )
-        sync_annual_executions(session, project)
+        sync_annual_executions(session, project, data_dir=app.state.data_dir)
         return RedirectResponse(
             _project_detail_url(project_id, return_year, q=q, status=status),
             status_code=303,
@@ -576,12 +597,18 @@ def create_app(
         request: Request,
         attachment_id: int,
         session: Annotated[Session, Depends(get_session)],
+        return_year: str | None = None,
+        q: str | None = None,
+        status: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
         attachment = session.get(Attachment, attachment_id)
         if attachment is None:
             return RedirectResponse("/projects", status_code=303)
+        selected_return_year = _normalize_return_year(return_year)
+        return_query = (q or "").strip()
+        return_status = normalize_status_filter(status)
         return templates.TemplateResponse(
             request,
             "attachment_preview.html",
@@ -589,6 +616,16 @@ def create_app(
                 "attachment": attachment,
                 "file_url": f"/attachments/{attachment.id}/file",
                 "download_url": f"/attachments/{attachment.id}/download",
+                "delete_url": f"/attachments/{attachment.id}/delete",
+                "back_url": _project_detail_url(
+                    attachment.project_id,
+                    selected_return_year,
+                    q=return_query,
+                    status=return_status,
+                ),
+                "return_year": selected_return_year,
+                "return_query": return_query,
+                "return_status": return_status,
             },
         )
 
@@ -597,12 +634,21 @@ def create_app(
         request: Request,
         attachment_id: int,
         session: Annotated[Session, Depends(get_session)],
+        return_year: str | None = None,
+        q: str | None = None,
+        status: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
         attachment = session.get(AnnualAttachment, attachment_id)
         if attachment is None:
             return RedirectResponse("/projects", status_code=303)
+        execution = session.get(AnnualExecution, attachment.execution_id)
+        if execution is None:
+            return RedirectResponse("/projects", status_code=303)
+        selected_return_year = _normalize_return_year(return_year)
+        return_query = (q or "").strip()
+        return_status = normalize_status_filter(status)
         return templates.TemplateResponse(
             request,
             "attachment_preview.html",
@@ -610,7 +656,63 @@ def create_app(
                 "attachment": attachment,
                 "file_url": f"/annual-attachments/{attachment.id}/file",
                 "download_url": f"/annual-attachments/{attachment.id}/download",
+                "delete_url": f"/annual-attachments/{attachment.id}/delete",
+                "back_url": _project_detail_url(
+                    execution.project_id,
+                    selected_return_year,
+                    q=return_query,
+                    status=return_status,
+                ),
+                "return_year": selected_return_year,
+                "return_query": return_query,
+                "return_status": return_status,
             },
+        )
+
+    @app.post("/attachments/{attachment_id}/delete")
+    def delete_attachment_route(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+        return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        deleted = delete_attachment_record(
+            session,
+            attachment_id,
+            data_dir=app.state.data_dir,
+        )
+        if deleted is None:
+            return RedirectResponse("/projects", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(deleted.project_id, return_year, q=q, status=status),
+            status_code=303,
+        )
+
+    @app.post("/annual-attachments/{attachment_id}/delete")
+    def delete_annual_attachment_route(
+        request: Request,
+        attachment_id: int,
+        session: Annotated[Session, Depends(get_session)],
+        return_year: Annotated[str, Form()] = "",
+        q: Annotated[str, Form()] = "",
+        status: Annotated[str, Form()] = "",
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        deleted = delete_annual_attachment_record(
+            session,
+            attachment_id,
+            data_dir=app.state.data_dir,
+        )
+        if deleted is None:
+            return RedirectResponse("/projects", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(deleted.project_id, return_year, q=q, status=status),
+            status_code=303,
         )
 
     @app.get("/attachments/{attachment_id}/file")
@@ -788,6 +890,26 @@ def _project_detail_url(
         params["status"] = normalized_status
     query_string = urlencode(params)
     return f"/projects/{project_id}?{query_string}" if query_string else f"/projects/{project_id}"
+
+
+def _return_context_url(
+    path: str,
+    return_year: str | int | None = None,
+    *,
+    q: str = "",
+    status: str = "",
+) -> str:
+    params: dict[str, str | int] = {}
+    year = _normalize_return_year(return_year)
+    if year is not None:
+        params["return_year"] = year
+    if q.strip():
+        params["q"] = q.strip()
+    normalized_status = normalize_status_filter(status)
+    if normalized_status:
+        params["status"] = normalized_status
+    query_string = urlencode(params)
+    return f"{path}?{query_string}" if query_string else path
 
 
 def _build_project_url(

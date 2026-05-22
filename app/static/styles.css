@@ -354,10 +354,34 @@ tbody tr.contract-only-row:hover {
 }
 .panel-head .status-grid { justify-content: end; }
 .contract-period {
-  display: grid;
-  gap: 2px;
-  line-height: 1.35;
+  display: inline-grid;
+  grid-template-columns: 1fr;
+  justify-items: start;
+  gap: 1px;
+  min-width: 94px;
+  padding-left: 7px;
+  border-left: 1px solid #d7ded5;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
   white-space: nowrap;
+}
+.period-date {
+  font-size: 14px;
+}
+.period-separator {
+  display: inline;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1;
+}
+.contract-period.empty {
+  display: inline-block;
+  min-width: 46px;
+  padding-left: 0;
+  border-left: 0;
+  color: #9aa2a8;
+  text-align: center;
 }
 .row-note {
   display: inline-flex;
@@ -377,6 +401,23 @@ tbody tr.contract-only-row:hover {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+.amount-value {
+  display: inline-block;
+  min-width: 76px;
+  color: #10233a;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-align: right;
+}
+.amount-value.empty {
+  min-width: 34px;
+  color: #9aa2a8;
+  font-weight: 500;
+  text-align: center;
 }
 .empty-value,
 .empty-row {
@@ -519,6 +560,27 @@ tbody tr.contract-only-row:hover {
   color: var(--ink-soft);
   font-size: 12px;
   font-weight: 700;
+}
+.annual-uploads .compact-upload {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  grid-auto-flow: column;
+  align-items: center;
+  min-width: 0;
+}
+.annual-upload-kind {
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+}
+.annual-uploads .compact-upload input[type="file"] {
+  min-width: 0;
+}
+.annual-uploads .compact-upload button {
+  min-width: 64px;
+  width: auto;
 }
 input[type="file"] {
   padding: 5px 10px;

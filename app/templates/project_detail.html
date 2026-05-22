@@ -19,7 +19,7 @@
 <section class="split-grid">
   <div class="panel">
     <div class="panel-head"><h2>项目主档</h2></div>
-    <form method="post" action="/projects/{{ overview.project.id }}/edit" class="form-grid">
+    <form method="post" action="/projects/{{ overview.project.id }}/edit" class="form-grid" data-preserve-scroll>
       {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
       {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
       {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
@@ -36,7 +36,7 @@
 
   <div class="panel">
     <div class="panel-head"><h2>项目级 PDF 附件</h2></div>
-    <form method="post" action="/projects/{{ overview.project.id }}/attachments" enctype="multipart/form-data" class="upload-row">
+    <form method="post" action="/projects/{{ overview.project.id }}/attachments" enctype="multipart/form-data" class="upload-row" data-preserve-scroll>
       {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
       {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
       {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
@@ -104,7 +104,7 @@
         <div><span>{{ money(item.execution.contract_amount) if not item.execution.contract_only else "-" }}</span><label>年度合同</label></div>
       </div>
 
-      <form method="post" action="/annual-executions/{{ item.execution.id }}/edit" class="form-grid annual-form">
+      <form method="post" action="/annual-executions/{{ item.execution.id }}/edit" class="form-grid annual-form" data-preserve-scroll>
         {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
         {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
         {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
@@ -120,12 +120,13 @@
       {% if not item.execution.contract_only %}
       <div class="annual-uploads">
         {% for kind in annual_attachment_kinds %}
-        <form method="post" action="/annual-executions/{{ item.execution.id }}/attachments" enctype="multipart/form-data" class="upload-row compact-upload">
+        <form method="post" action="/annual-executions/{{ item.execution.id }}/attachments" enctype="multipart/form-data" class="upload-row compact-upload" data-preserve-scroll>
           {% if return_year %}<input type="hidden" name="return_year" value="{{ return_year }}">{% endif %}
           {% if return_query %}<input type="hidden" name="q" value="{{ return_query }}">{% endif %}
           {% if return_status %}<input type="hidden" name="status" value="{{ return_status }}">{% endif %}
           <input type="hidden" name="kind" value="{{ kind.value }}">
-          <label>{{ kind.label }}<input name="file" type="file" accept="application/pdf,.pdf" required></label>
+          <label class="annual-upload-kind" for="annual-file-{{ item.execution.id }}-{{ kind.value }}">{{ kind.label }}</label>
+          <input id="annual-file-{{ item.execution.id }}-{{ kind.value }}" name="file" type="file" accept="application/pdf,.pdf" required>
           <button type="submit">上传</button>
         </form>
         {% endfor %}

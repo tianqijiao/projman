@@ -9,7 +9,7 @@
   <div class="toolbar-actions">
     <form method="get" action="/projects" class="ledger-filters">
       <label>年度筛选
-        <select name="year">
+        <select name="year" onchange="this.form.submit()">
           <option value="">全部年度</option>
           {% for item_year in years %}
           <option value="{{ item_year }}" {% if year == item_year %}selected{% endif %}>{{ item_year }} 年</option>
@@ -26,7 +26,7 @@
           {% endfor %}
         </select>
       </label>
-      <button class="ghost" type="submit">筛选</button>
+      <button class="ghost" type="submit">查询</button>
       <a class="button ghost-link" href="/projects">重置</a>
     </form>
     <a class="button ghost-link" href="{{ export_url }}">导出Excel</a>
@@ -51,15 +51,28 @@
           {% if item.execution.contract_only %}<span class="row-note">合同管理年</span>{% endif %}
         </td>
         <td class="money-cell {% if item.execution.contract_only or item.execution.budget_amount is none %}empty-value{% endif %}">
-          {% if item.execution.contract_only %}-{% else %}{{ money(item.execution.budget_amount) }}{% endif %}
+          {% if item.execution.contract_only or item.execution.budget_amount is none %}
+          <span class="amount-value empty">-</span>
+          {% else %}
+          <span class="amount-value">{{ money(item.execution.budget_amount) }}</span>
+          {% endif %}
         </td>
         <td class="money-cell {% if item.execution.contract_only or item.execution.contract_amount is none %}empty-value{% endif %}">
-          {% if item.execution.contract_only %}-{% else %}{{ money(item.execution.contract_amount) }}{% endif %}
+          {% if item.execution.contract_only or item.execution.contract_amount is none %}
+          <span class="amount-value empty">-</span>
+          {% else %}
+          <span class="amount-value">{{ money(item.execution.contract_amount) }}</span>
+          {% endif %}
         </td>
         <td>
           {% if item.project.contract_start and item.project.contract_end %}
-          <span class="contract-period"><span>{{ item.project.contract_start }} 至</span><span>{{ item.project.contract_end }}</span></span>
-          {% else %}-{% endif %}
+          <span class="contract-period">
+            <span class="period-date">{{ item.project.contract_start }} <span class="period-separator">至</span></span>
+            <span class="period-date">{{ item.project.contract_end }}</span>
+          </span>
+          {% else %}
+          <span class="contract-period empty">-</span>
+          {% endif %}
         </td>
         <td>
           {% if item.execution.contract_only %}

@@ -278,9 +278,45 @@ def test_project_list_can_filter_by_year(tmp_path):
     assert '<option value="">全部年度</option>' in all_response.text
     assert '<option value="2027"' in all_response.text
     assert '<option value="2028"' in all_response.text
+    assert '<button class="ghost" type="submit">查询</button>' in all_response.text
+    assert '<button class="ghost" type="submit">筛选</button>' not in all_response.text
     assert "2027 年项目" in filtered_response.text
     assert "2028 年项目" not in filtered_response.text
     assert '<option value="2027" selected>2027 年</option>' in filtered_response.text
+    assert '<select name="year" onchange="this.form.submit()">' in filtered_response.text
+
+
+def test_project_ledger_money_and_contract_period_are_polished(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "金额样式项目", "budget_amount": "12345"},
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "金额样式项目",
+            "budget_amount": "12345",
+            "contract_amount": "12345",
+            "contract_start": "2026-05-22",
+            "contract_end": "2027-05-21",
+            "notes": "",
+        },
+    )
+
+    response = client.get("/projects?year=2027")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert '<span class="amount-value">6,172.50</span>' in response.text
+    assert '<span class="amount-badge">' not in response.text
+    assert '<span class="period-date">2026-05-22 <span class="period-separator">至</span></span>' in response.text
+    assert '<span class="period-separator">至</span>' in response.text
+    assert '<span class="period-date">2027-05-21</span>' in response.text
+    assert ".amount-value" in styles
+    assert ".amount-badge" not in styles
+    assert ".period-separator" in styles
 
 
 def test_project_list_treats_empty_year_filter_as_all_years(tmp_path):
@@ -595,6 +631,34 @@ def test_project_detail_back_link_preserves_ledger_year_filter(tmp_path):
     assert 'href="/projects?year=2026"' in detail_response.text
 
 
+def test_project_detail_save_forms_preserve_scroll_position(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "滚动保持项目", "budget_amount": "30000"},
+    )
+
+    base_response = client.get("/projects/1")
+    detail_response = client.get("/projects/1")
+
+    assert 'src="/static/app.js"' in base_response.text
+    assert detail_response.text.count("data-preserve-scroll") == 5
+    assert 'action="/projects/1/edit" class="form-grid" data-preserve-scroll' in detail_response.text
+    assert (
+        'action="/projects/1/attachments" enctype="multipart/form-data" '
+        'class="upload-row" data-preserve-scroll'
+    ) in detail_response.text
+    assert "/annual-executions/1/edit" in detail_response.text
+    assert "/annual-executions/1/attachments" in detail_response.text
+    assert 'action="/projects/1/delete"' in detail_response.text
+    delete_form_start = detail_response.text.index('action="/projects/1/delete"')
+    delete_form_end = detail_response.text.index("</form>", delete_form_start)
+    assert "data-preserve-scroll" not in detail_response.text[
+        delete_form_start:delete_form_end
+    ]
+
+
 def test_project_detail_delete_preserves_full_ledger_filter_context(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -745,6 +809,25 @@ def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     assert "62,000.00" in updated_response.text
     assert "2027验收单.pdf" in updated_response.text
     assert "2027发票.pdf" in updated_response.text
+
+
+def test_annual_attachment_upload_controls_use_aligned_grid(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度上传对齐项目", "budget_amount": "60000"},
+    )
+
+    response = client.get("/projects/1")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert 'class="annual-upload-kind"' in response.text
+    assert 'id="annual-file-1-acceptance"' in response.text
+    assert 'for="annual-file-1-acceptance"' in response.text
+    assert ".annual-uploads .compact-upload" in styles
+    assert "grid-template-columns: auto minmax(160px, 1fr) auto;" in styles
+    assert "grid-auto-flow: column;" in styles
 
 
 def test_annual_attachment_can_be_deleted_from_detail_and_preview(tmp_path):

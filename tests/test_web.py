@@ -496,6 +496,89 @@ def test_cross_year_project_appears_in_each_execution_year(tmp_path):
     assert "90,000.00" in execution_year_response.text
 
 
+def test_project_detail_back_link_preserves_ledger_year_filter(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "次年管理项目", "budget_amount": "30000"},
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "次年管理项目",
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "contract_start": "2026-05-22",
+            "contract_end": "2027-05-22",
+            "notes": "",
+        },
+    )
+
+    ledger_response = client.get("/projects?year=2026")
+    detail_response = client.get("/projects/1?return_year=2026")
+
+    assert ledger_response.status_code == 200
+    assert 'href="/projects/1?return_year=2026"' in ledger_response.text
+    assert detail_response.status_code == 200
+    assert 'href="/projects?year=2026"' in detail_response.text
+
+
+def test_project_detail_save_redirect_preserves_return_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "返回年度项目", "budget_amount": "30000"},
+    )
+
+    response = client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "返回年度项目",
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "contract_start": "2026-05-22",
+            "contract_end": "2027-05-22",
+            "notes": "",
+            "return_year": "2026",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/projects/1?return_year=2026"
+
+
+def test_annual_execution_save_redirect_preserves_return_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度返回项目", "budget_amount": "30000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    response = client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "",
+            "return_year": "2026",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/projects/1?return_year=2026"
+
+
 def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     client = make_client(tmp_path)
     login(client)

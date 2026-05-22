@@ -315,12 +315,16 @@ def create_app(
         request: Request,
         project_id: int,
         session: Annotated[Session, Depends(get_session)],
+        return_year: str | None = None,
     ):
         if redirect := login_redirect(request):
             return redirect
         project = session.get(Project, project_id)
         if project is None:
             return RedirectResponse("/projects", status_code=303)
+        overview = project_overview(session, project)
+        selected_return_year = _normalize_return_year(return_year)
+        back_year = selected_return_year or overview.project.year
         annual_overviews = [
             annual_project_overview(session, execution)
             for execution in sync_annual_executions(session, project)
@@ -329,10 +333,17 @@ def create_app(
             request,
             "project_detail.html",
             {
-                "overview": project_overview(session, project),
+                "overview": overview,
                 "annual_overviews": annual_overviews,
                 "project_attachment_kinds": PROJECT_ATTACHMENT_KINDS,
                 "annual_attachment_kinds": ANNUAL_ATTACHMENT_KINDS,
+                "return_year": selected_return_year,
+                "back_to_projects_url": _build_project_url(
+                    "/projects",
+                    year=back_year,
+                    q="",
+                    status="",
+                ),
                 "money": format_money,
             },
         )
@@ -351,6 +362,7 @@ def create_app(
         acceptance_date: Annotated[str, Form()] = "",
         payment_date: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
+        return_year: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -368,7 +380,10 @@ def create_app(
             notes=notes.strip(),
         )
         sync_annual_executions(session, project)
-        return RedirectResponse(f"/projects/{project_id}", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(project_id, return_year),
+            status_code=303,
+        )
 
     @app.post("/annual-executions/{execution_id}/edit")
     def edit_annual_execution(
@@ -381,6 +396,7 @@ def create_app(
         acceptance_date: Annotated[str, Form()] = "",
         payment_date: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
+        return_year: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -397,7 +413,10 @@ def create_app(
             payment_date=_parse_date(payment_date),
             notes=notes.strip(),
         )
-        return RedirectResponse(f"/projects/{execution.project_id}", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(execution.project_id, return_year),
+            status_code=303,
+        )
 
     @app.post("/annual-executions/{execution_id}/attachments")
     async def upload_annual_attachment(
@@ -406,6 +425,7 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
         kind: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
+        return_year: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -421,7 +441,10 @@ def create_app(
             original_filename=file.filename or "attachment.pdf",
             content=content,
         )
-        return RedirectResponse(f"/projects/{execution.project_id}", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(execution.project_id, return_year),
+            status_code=303,
+        )
 
     @app.get("/annual-executions/{execution_id}/attachments/download-year")
     def download_annual_execution_attachments(
@@ -473,6 +496,7 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
         kind: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
+        return_year: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
@@ -488,7 +512,10 @@ def create_app(
             original_filename=file.filename or "attachment.pdf",
             content=content,
         )
-        return RedirectResponse(f"/projects/{project_id}", status_code=303)
+        return RedirectResponse(
+            _project_detail_url(project_id, return_year),
+            status_code=303,
+        )
 
     @app.get("/attachments/{attachment_id}")
     def attachment_entry(
@@ -690,6 +717,22 @@ def _parse_optional_year(value: str | None) -> int | None:
     if value is None or value.strip() == "":
         return None
     return int(value)
+
+
+def _normalize_return_year(value: str | int | None) -> int | None:
+    if isinstance(value, int):
+        return value
+    try:
+        return _parse_optional_year(value)
+    except ValueError:
+        return None
+
+
+def _project_detail_url(project_id: int, return_year: str | int | None = None) -> str:
+    year = _normalize_return_year(return_year)
+    if year is None:
+        return f"/projects/{project_id}"
+    return f"/projects/{project_id}?{urlencode({'return_year': year})}"
 
 
 def _build_project_url(

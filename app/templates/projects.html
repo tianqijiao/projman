@@ -47,7 +47,11 @@
       <tr class="{% if item.execution.contract_only %}contract-only-row{% endif %}">
         <td>{{ item.execution.year }}</td>
         <td>
-          <a href="/projects/{{ item.project.id }}">{{ item.project.name }}</a>
+          {% set detail_url = "/projects/" ~ item.project.id %}
+          {% if year %}
+          {% set detail_url = detail_url ~ "?return_year=" ~ year %}
+          {% endif %}
+          <a href="{{ detail_url }}">{{ item.project.name }}</a>
           {% if item.execution.contract_only %}<span class="row-note">合同管理年</span>{% endif %}
         </td>
         <td class="money-cell {% if item.execution.contract_only or item.execution.budget_amount is none %}empty-value{% endif %}">

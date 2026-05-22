@@ -554,6 +554,52 @@ def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     assert "2027发票.pdf" in updated_response.text
 
 
+def test_manual_contract_management_checkbox_updates_ledger(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "次年付款合同", "budget_amount": "30000"},
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "次年付款合同",
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "contract_start": "2026-05-22",
+            "contract_end": "2027-05-22",
+            "notes": "",
+        },
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(
+            select(AnnualExecution).where(AnnualExecution.year == 2026)
+        ).one()
+
+    client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "",
+            "contract_amount": "15000",
+            "contract_only": "on",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "本年只管理合同",
+        },
+    )
+
+    ledger_response = client.get("/projects?year=2026")
+    next_year_response = client.get("/projects?year=2027")
+
+    assert ledger_response.status_code == 200
+    assert "次年付款合同" in ledger_response.text
+    assert "合同管理年" in ledger_response.text
+    assert "15,000.00" not in ledger_response.text
+    assert "30,000.00" in next_year_response.text
+
+
 def test_excel_export_uses_annual_execution_rows(tmp_path):
     client = make_client(tmp_path)
     login(client)

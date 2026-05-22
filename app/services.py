@@ -189,14 +189,34 @@ def sync_annual_executions(session: Session, project: Project) -> list[AnnualExe
     for execution in stale_executions:
         session.delete(execution)
 
-    normal_count = max(len(target_years & normal_years), 1)
+    effective_contract_only_by_year = {
+        year: (
+            existing[year].contract_only
+            if year in existing and existing[year].manual_amounts
+            else year not in normal_years
+        )
+        for year in target_years
+    }
+    payable_year_count = max(
+        sum(1 for contract_only in effective_contract_only_by_year.values() if not contract_only),
+        1,
+    )
     changed = bool(stale_executions)
 
     for year in sorted(target_years):
-        contract_only = year not in normal_years
-        budget_amount = None if contract_only else _split_amount(project.budget_amount, normal_count)
-        contract_amount = None if contract_only else _split_amount(project.contract_amount, normal_count)
-        execution = existing.get(year)
+        contract_only = effective_contract_only_by_year[year]
+        existing_execution = existing.get(year)
+        budget_amount = (
+            None
+            if contract_only
+            else _split_amount(project.budget_amount, payable_year_count)
+        )
+        contract_amount = (
+            None
+            if contract_only
+            else _split_amount(project.contract_amount, payable_year_count)
+        )
+        execution = existing_execution
         if execution is None:
             execution = AnnualExecution(
                 project_id=project.id,
@@ -219,7 +239,7 @@ def sync_annual_executions(session: Session, project: Project) -> list[AnnualExe
             changed = True
             continue
 
-        if execution.contract_only != contract_only:
+        if not execution.manual_amounts and execution.contract_only != contract_only:
             execution.contract_only = contract_only
             changed = True
         if not execution.manual_amounts:
@@ -265,6 +285,9 @@ def update_annual_execution(
             setattr(execution, key, value)
             if key in amount_fields:
                 execution.manual_amounts = True
+    if execution.contract_only:
+        execution.budget_amount = None
+        execution.contract_amount = None
     execution.updated_at = datetime.now()
     session.add(execution)
     session.commit()

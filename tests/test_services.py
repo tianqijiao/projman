@@ -237,6 +237,44 @@ def test_cross_year_contract_first_service_year_is_payable_execution_year(engine
         assert [item.contract_amount for item in executions] == [90000, 90000, 90000]
 
 
+def test_manual_contract_management_year_inside_service_period_is_preserved(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="次年付款的一年合同",
+            budget_amount=30000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=30000,
+            contract_start=date(2026, 5, 22),
+            contract_end=date(2027, 5, 22),
+        )
+        executions = sync_annual_executions(session, project)
+        first_year = next(item for item in executions if item.year == 2026)
+
+        update_annual_execution(
+            session,
+            first_year.id,
+            budget_amount=None,
+            contract_amount=15000,
+            contract_only=True,
+        )
+        refreshed = sync_annual_executions(session, project)
+
+        assert [(item.year, item.contract_only) for item in refreshed] == [
+            (2026, True),
+            (2027, False),
+        ]
+        assert refreshed[0].manual_amounts
+        assert refreshed[0].budget_amount is None
+        assert refreshed[0].contract_amount is None
+        assert refreshed[1].budget_amount == 30000
+        assert refreshed[1].contract_amount == 30000
+
+
 def test_annual_status_uses_year_specific_acceptance_and_payment(engine, tmp_path):
     with Session(engine) as session:
         project = create_project(

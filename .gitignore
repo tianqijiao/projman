@@ -16,3 +16,6 @@ logs/
 *.log
 
 .superpowers/
+
+# Local planning notes
+构想.txt

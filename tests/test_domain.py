@@ -167,6 +167,16 @@ def test_renewal_reminder_starts_sixty_days_before_contract_end():
     assert is_renewal_due(project, today=date(2028, 1, 1), lead_days=60) is True
 
 
+def test_renewal_reminder_ignores_projects_without_contract_end():
+    project = ProjectDraft(
+        year=2027,
+        name="尚未签合同项目",
+        contract_start=date(2027, 1, 1),
+    )
+
+    assert is_renewal_due(project, today=date(2027, 11, 1), lead_days=60) is False
+
+
 def test_budget_delta_marks_contract_over_budget_without_blocking_save():
     delta = contract_budget_delta(budget_amount=50000, contract_amount=52000)
 
@@ -177,6 +187,16 @@ def test_budget_delta_marks_contract_over_budget_without_blocking_save():
 def test_attachment_storage_name_keeps_pdf_extension_and_avoids_raw_path_use():
     stored = attachment_storage_name(
         original_filename="合同扫描件.pdf",
+        kind=AttachmentKind.SIGNED_CONTRACT,
+        timestamp="20270521-091500",
+    )
+
+    assert stored == "20270521-091500-signed_contract-合同扫描件.pdf"
+
+
+def test_attachment_storage_name_strips_path_segments_from_uploaded_filename():
+    stored = attachment_storage_name(
+        original_filename=r"..\..\合同扫描件.pdf",
         kind=AttachmentKind.SIGNED_CONTRACT,
         timestamp="20270521-091500",
     )

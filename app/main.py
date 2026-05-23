@@ -1,5 +1,6 @@
 from datetime import date
 from io import BytesIO
+import math
 import os
 from pathlib import Path
 from typing import Annotated
@@ -33,6 +34,7 @@ from app.services import (
     list_project_overviews,
     normalize_status_filter,
     project_overview,
+    resolve_stored_file,
     save_annual_attachment_bytes,
     save_attachment_bytes,
     set_int_setting,
@@ -159,6 +161,8 @@ def create_app(
     ):
         if redirect := login_redirect(request):
             return redirect
+        if renewal_lead_days < 1:
+            return _bad_request("续采提醒提前天数必须大于 0")
         set_int_setting(session, "renewal_lead_days", renewal_lead_days)
         return RedirectResponse("/settings", status_code=303)
 
@@ -267,15 +271,15 @@ def create_app(
         archive = BytesIO()
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for attachment in attachments:
-                path = app.state.data_dir / attachment.stored_path
-                if path.exists():
+                path = resolve_stored_file(app.state.data_dir, attachment.stored_path)
+                if path is not None:
                     zip_file.write(
                         path,
                         arcname=f"{attachment.kind.label}/{attachment.original_filename}",
                     )
             for attachment in annual_attachments:
-                path = app.state.data_dir / attachment.stored_path
-                if path.exists():
+                path = resolve_stored_file(app.state.data_dir, attachment.stored_path)
+                if path is not None:
                     zip_file.write(
                         path,
                         arcname=(
@@ -318,13 +322,16 @@ def create_app(
     ):
         if redirect := login_redirect(request):
             return redirect
-        project = create_project(
-            session,
-            year=year,
-            name=name,
-            budget_amount=_parse_float(budget_amount),
-            notes=notes,
-        )
+        try:
+            project = create_project(
+                session,
+                year=year,
+                name=name,
+                budget_amount=_parse_float(budget_amount, "预算金额"),
+                notes=notes,
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
         sync_annual_executions(session, project, data_dir=app.state.data_dir)
         return RedirectResponse(f"/?year={year}", status_code=303)
 
@@ -397,19 +404,22 @@ def create_app(
     ):
         if redirect := login_redirect(request):
             return redirect
-        project = update_project(
-            session,
-            project_id,
-            year=year,
-            name=name.strip(),
-            budget_amount=_parse_float(budget_amount),
-            contract_amount=_parse_float(contract_amount),
-            contract_start=_parse_date(contract_start),
-            contract_end=_parse_date(contract_end),
-            acceptance_date=_parse_date(acceptance_date),
-            payment_date=_parse_date(payment_date),
-            notes=notes.strip(),
-        )
+        try:
+            project = update_project(
+                session,
+                project_id,
+                year=year,
+                name=name.strip(),
+                budget_amount=_parse_float(budget_amount, "项目预算总额"),
+                contract_amount=_parse_float(contract_amount, "合同总额"),
+                contract_start=_parse_date(contract_start, "合同开始日期"),
+                contract_end=_parse_date(contract_end, "合同结束日期"),
+                acceptance_date=_parse_date(acceptance_date, "验收日期"),
+                payment_date=_parse_date(payment_date, "付款日期"),
+                notes=notes.strip(),
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
         sync_annual_executions(session, project, data_dir=app.state.data_dir)
         return RedirectResponse(
             _project_detail_url(project_id, return_year, q=q, status=status),
@@ -462,16 +472,19 @@ def create_app(
         execution = session.get(AnnualExecution, execution_id)
         if execution is None:
             return RedirectResponse("/projects", status_code=303)
-        update_annual_execution(
-            session,
-            execution_id,
-            budget_amount=_parse_float(budget_amount),
-            contract_amount=_parse_float(contract_amount),
-            contract_only=contract_only == "on",
-            acceptance_date=_parse_date(acceptance_date),
-            payment_date=_parse_date(payment_date),
-            notes=notes.strip(),
-        )
+        try:
+            update_annual_execution(
+                session,
+                execution_id,
+                budget_amount=_parse_float(budget_amount, "年度预算"),
+                contract_amount=_parse_float(contract_amount, "年度合同金额"),
+                contract_only=contract_only == "on",
+                acceptance_date=_parse_date(acceptance_date, "验收日期"),
+                payment_date=_parse_date(payment_date, "付款日期"),
+                notes=notes.strip(),
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
         return RedirectResponse(
             _project_detail_url(execution.project_id, return_year, q=q, status=status),
             status_code=303,
@@ -494,14 +507,17 @@ def create_app(
         if execution is None:
             return RedirectResponse("/projects", status_code=303)
         content = await file.read()
-        save_annual_attachment_bytes(
-            session,
-            execution=execution,
-            data_dir=app.state.data_dir,
-            kind=AttachmentKind(kind),
-            original_filename=file.filename or "attachment.pdf",
-            content=content,
-        )
+        try:
+            save_annual_attachment_bytes(
+                session,
+                execution=execution,
+                data_dir=app.state.data_dir,
+                kind=AttachmentKind(kind),
+                original_filename=file.filename or "attachment.pdf",
+                content=content,
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
         return RedirectResponse(
             _project_detail_url(execution.project_id, return_year, q=q, status=status),
             status_code=303,
@@ -522,8 +538,8 @@ def create_app(
         archive = BytesIO()
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for attachment in overview.project_attachments:
-                path = app.state.data_dir / attachment.stored_path
-                if path.exists():
+                path = resolve_stored_file(app.state.data_dir, attachment.stored_path)
+                if path is not None:
                     zip_file.write(
                         path,
                         arcname=f"项目资料/{attachment.kind.label}/{attachment.original_filename}",
@@ -532,8 +548,8 @@ def create_app(
                 *overview.annual_attachments,
                 *overview.legacy_annual_attachments,
             ]:
-                path = app.state.data_dir / attachment.stored_path
-                if path.exists():
+                path = resolve_stored_file(app.state.data_dir, attachment.stored_path)
+                if path is not None:
                     zip_file.write(
                         path,
                         arcname=f"年度资料/{attachment.kind.label}/{attachment.original_filename}",
@@ -567,14 +583,17 @@ def create_app(
         if project is None:
             return RedirectResponse("/projects", status_code=303)
         content = await file.read()
-        save_attachment_bytes(
-            session,
-            project=project,
-            data_dir=app.state.data_dir,
-            kind=AttachmentKind(kind),
-            original_filename=file.filename or "attachment.pdf",
-            content=content,
-        )
+        try:
+            save_attachment_bytes(
+                session,
+                project=project,
+                data_dir=app.state.data_dir,
+                kind=AttachmentKind(kind),
+                original_filename=file.filename or "attachment.pdf",
+                content=content,
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
         return RedirectResponse(
             _project_detail_url(project_id, return_year, q=q, status=status),
             status_code=303,
@@ -784,7 +803,9 @@ def create_app(
         attachment = session.get(Attachment, attachment_id)
         if attachment is None:
             return RedirectResponse("/projects", status_code=303)
-        path = data_dir / attachment.stored_path
+        path = resolve_stored_file(data_dir, attachment.stored_path)
+        if path is None:
+            return RedirectResponse("/projects", status_code=303)
         return FileResponse(
             path,
             filename=attachment.original_filename,
@@ -805,7 +826,9 @@ def create_app(
         attachment = session.get(AnnualAttachment, attachment_id)
         if attachment is None:
             return RedirectResponse("/projects", status_code=303)
-        path = data_dir / attachment.stored_path
+        path = resolve_stored_file(data_dir, attachment.stored_path)
+        if path is None:
+            return RedirectResponse("/projects", status_code=303)
         return FileResponse(
             path,
             filename=attachment.original_filename,
@@ -843,24 +866,40 @@ def select_annual_executions_by_year():
     return select(AnnualExecution).order_by(AnnualExecution.year.desc())
 
 
-def _parse_float(value: str) -> float | None:
+def _bad_request(message: str) -> Response:
+    return Response(message, status_code=400, media_type="text/plain; charset=utf-8")
+
+
+def _parse_float(value: str, field_label: str = "金额") -> float | None:
     value = value.strip()
     if not value:
         return None
-    return float(value)
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise ValueError(f"{field_label}格式不正确") from None
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field_label}格式不正确")
+    return parsed
 
 
-def _parse_date(value: str) -> date | None:
+def _parse_date(value: str, field_label: str = "日期") -> date | None:
     value = value.strip()
     if not value:
         return None
-    return date.fromisoformat(value)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{field_label}格式不正确") from None
 
 
 def _parse_optional_year(value: str | None) -> int | None:
     if value is None or value.strip() == "":
         return None
-    return int(value)
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _normalize_return_year(value: str | int | None) -> int | None:

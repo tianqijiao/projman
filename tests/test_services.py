@@ -55,6 +55,82 @@ def test_create_and_update_project_persists_fields(engine):
         assert updated.contract_end == date(2027, 12, 31)
 
 
+def test_create_project_rejects_blank_name(engine):
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="项目名称不能为空"):
+            create_project(session, year=2027, name="   ", budget_amount=30000)
+
+        assert session.exec(select(Project)).all() == []
+
+
+@pytest.mark.parametrize("budget_amount", [float("inf"), float("-inf")])
+def test_create_project_rejects_non_finite_budget_amount(engine, budget_amount):
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="预算金额格式不正确"):
+            create_project(
+                session,
+                year=2027,
+                name="非有限金额项目",
+                budget_amount=budget_amount,
+            )
+
+        assert session.exec(select(Project)).all() == []
+
+
+def test_update_project_rejects_blank_name(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="原项目名称",
+            budget_amount=30000,
+        )
+
+        with pytest.raises(ValueError, match="项目名称不能为空"):
+            update_project(session, project.id, name="   ")
+
+        session.refresh(project)
+        assert project.name == "原项目名称"
+
+
+def test_update_project_rejects_non_finite_contract_amount(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="合同金额保护项目",
+            budget_amount=30000,
+        )
+
+        with pytest.raises(ValueError, match="合同金额格式不正确"):
+            update_project(session, project.id, contract_amount=float("inf"))
+
+        session.refresh(project)
+        assert project.contract_amount is None
+
+
+def test_update_project_rejects_contract_start_after_contract_end(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="合同日期保护项目",
+            budget_amount=30000,
+        )
+
+        with pytest.raises(ValueError, match="合同开始日期不能晚于合同结束日期"):
+            update_project(
+                session,
+                project.id,
+                contract_start=date(2028, 1, 1),
+                contract_end=date(2027, 12, 31),
+            )
+
+        session.refresh(project)
+        assert project.contract_start is None
+        assert project.contract_end is None
+
+
 def test_save_attachment_copies_pdf_under_project_directory(engine, tmp_path):
     with Session(engine) as session:
         project = create_project(session, year=2027, name="行政电脑维护服务")
@@ -91,6 +167,99 @@ def test_save_attachment_rejects_non_pdf(engine, tmp_path):
             )
 
 
+def test_save_attachment_rejects_pdf_extension_with_non_pdf_content(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="伪 PDF 项目")
+
+        with pytest.raises(ValueError, match="PDF"):
+            save_attachment_bytes(
+                session,
+                project=project,
+                data_dir=tmp_path,
+                kind=AttachmentKind.PROCUREMENT_BASIS,
+                original_filename="采购依据.pdf",
+                content=b"not a pdf",
+            )
+
+
+def test_save_attachment_rejects_non_pdf_extension_with_pdf_content(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="错扩展名项目")
+
+        with pytest.raises(ValueError, match="PDF"):
+            save_attachment_bytes(
+                session,
+                project=project,
+                data_dir=tmp_path,
+                kind=AttachmentKind.PROCUREMENT_BASIS,
+                original_filename="采购依据.txt",
+                content=b"%PDF-1.7 fake",
+            )
+
+
+def test_save_project_attachment_rejects_annual_attachment_kind(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="项目级附件类型边界项目")
+
+        with pytest.raises(ValueError, match="项目级附件"):
+            save_attachment_bytes(
+                session,
+                project=project,
+                data_dir=tmp_path,
+                kind=AttachmentKind.INVOICE,
+                original_filename="发票.pdf",
+                content=b"%PDF-1.7 fake",
+            )
+
+
+def test_save_annual_attachment_rejects_project_level_attachment_kind(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="年度附件类型项目")
+        execution = sync_annual_executions(session, project)[0]
+
+        with pytest.raises(ValueError, match="年度附件只支持验收单和发票"):
+            save_annual_attachment_bytes(
+                session,
+                execution=execution,
+                data_dir=tmp_path,
+                kind=AttachmentKind.SIGNED_CONTRACT,
+                original_filename="盖章合同.pdf",
+                content=b"%PDF-1.7 fake",
+            )
+
+
+def test_save_annual_attachment_rejects_pdf_extension_with_non_pdf_content(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="年度伪 PDF 项目")
+        execution = sync_annual_executions(session, project)[0]
+
+        with pytest.raises(ValueError, match="PDF"):
+            save_annual_attachment_bytes(
+                session,
+                execution=execution,
+                data_dir=tmp_path,
+                kind=AttachmentKind.ACCEPTANCE,
+                original_filename="验收单.pdf",
+                content=b"not a pdf",
+            )
+
+
+def test_save_annual_attachment_rejects_non_pdf_extension_with_pdf_content(engine, tmp_path):
+    with Session(engine) as session:
+        project = create_project(session, year=2027, name="年度错扩展名项目")
+        execution = sync_annual_executions(session, project)[0]
+
+        with pytest.raises(ValueError, match="PDF"):
+            save_annual_attachment_bytes(
+                session,
+                execution=execution,
+                data_dir=tmp_path,
+                kind=AttachmentKind.ACCEPTANCE,
+                original_filename="验收单.txt",
+                content=b"%PDF-1.7 fake",
+            )
+
+
 def test_delete_attachment_removes_record_and_file(engine, tmp_path):
     with Session(engine) as session:
         project = create_project(session, year=2027, name="附件删除项目")
@@ -110,6 +279,31 @@ def test_delete_attachment_removes_record_and_file(engine, tmp_path):
         assert deleted.project_id == project.id
         assert session.get(Attachment, attachment.id) is None
         assert not stored_file.exists()
+
+
+def test_delete_attachment_does_not_unlink_files_outside_data_dir(engine, tmp_path):
+    outside_file = tmp_path.parent / f"{tmp_path.name}-outside.pdf"
+    outside_file.write_bytes(b"%PDF-1.7 outside")
+    try:
+        with Session(engine) as session:
+            project = create_project(session, year=2027, name="路径保护项目")
+            attachment = Attachment(
+                project_id=project.id,
+                kind=AttachmentKind.PROCUREMENT_BASIS,
+                original_filename="外部文件.pdf",
+                stored_path=f"../{outside_file.name}",
+            )
+            session.add(attachment)
+            session.commit()
+            session.refresh(attachment)
+
+            deleted = delete_attachment(session, attachment.id, data_dir=tmp_path)
+
+            assert deleted is not None
+            assert session.get(Attachment, attachment.id) is None
+            assert outside_file.exists()
+    finally:
+        outside_file.unlink(missing_ok=True)
 
 
 def test_delete_annual_attachment_removes_record_and_file(engine, tmp_path):
@@ -179,6 +373,35 @@ def test_dashboard_summary_counts_open_work_and_renewal_alerts(engine, tmp_path)
         assert summary.unaccepted_count == 2
         assert summary.unpaid_count == 2
         assert [item.project.name for item in summary.renewal_due] == ["行政电脑维护服务"]
+
+
+def test_dashboard_summary_contract_management_year_skips_acceptance_and_payment_counts(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2026,
+            name="次年服务合同",
+            budget_amount=30000,
+        )
+        update_project(
+            session,
+            project.id,
+            contract_amount=30000,
+            contract_start=date(2027, 1, 1),
+            contract_end=date(2027, 12, 31),
+        )
+
+        summary = dashboard_summary(
+            session,
+            year=2026,
+            today=date(2026, 12, 1),
+            renewal_lead_days=60,
+        )
+
+        assert summary.total_projects == 1
+        assert summary.projects[0].execution.contract_only is True
+        assert summary.unaccepted_count == 0
+        assert summary.unpaid_count == 0
 
 
 def test_sync_annual_executions_expands_cross_year_project_and_preserves_manual_amounts(engine):
@@ -358,6 +581,23 @@ def test_manual_contract_management_year_inside_service_period_is_preserved(engi
         assert refreshed[1].contract_amount == 30000
 
 
+def test_update_annual_execution_rejects_non_finite_budget_amount(engine):
+    with Session(engine) as session:
+        project = create_project(
+            session,
+            year=2027,
+            name="年度金额保护项目",
+            budget_amount=60000,
+        )
+        execution = sync_annual_executions(session, project)[0]
+
+        with pytest.raises(ValueError, match="年度预算格式不正确"):
+            update_annual_execution(session, execution.id, budget_amount=float("inf"))
+
+        session.refresh(execution)
+        assert execution.budget_amount == 60000
+
+
 def test_annual_status_uses_year_specific_acceptance_and_payment(engine, tmp_path):
     with Session(engine) as session:
         project = create_project(
@@ -442,14 +682,15 @@ def test_legacy_project_acceptance_and_invoice_count_for_first_execution(engine,
             (AttachmentKind.ACCEPTANCE, "旧验收单.pdf"),
             (AttachmentKind.INVOICE, "旧发票.pdf"),
         ]:
-            save_attachment_bytes(
-                session,
-                project=project,
-                data_dir=tmp_path,
-                kind=kind,
-                original_filename=filename,
-                content=b"%PDF-1.7 fake",
+            session.add(
+                Attachment(
+                    project_id=project.id,
+                    kind=kind,
+                    original_filename=filename,
+                    stored_path=f"legacy/{filename}",
+                )
             )
+        session.commit()
 
         overview = list_annual_project_overviews(session, year=2027)[0]
 

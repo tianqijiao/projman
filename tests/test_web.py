@@ -1,10 +1,13 @@
+from datetime import date, timedelta
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlmodel import Session, select
 
+from app.domain import AttachmentKind
 from app.main import create_app
 from app.models import AnnualAttachment, AnnualExecution, Attachment, Project
 
@@ -38,6 +41,120 @@ def test_dashboard_requires_login(tmp_path):
     assert response.headers["location"] == "/login"
 
 
+def test_business_and_attachment_routes_require_login(tmp_path):
+    client = make_client(tmp_path)
+
+    protected_paths = [
+        "/projects",
+        "/projects/1",
+        "/attachments/1/preview",
+        "/attachments/1/file",
+        "/attachments/1/download",
+        "/annual-attachments/1/preview",
+        "/annual-attachments/1/file",
+        "/annual-attachments/1/download",
+    ]
+
+    for path in protected_paths:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 303, path
+        assert response.headers["location"] == "/login", path
+
+
+def test_login_rejects_bad_password_and_logout_protects_pages(tmp_path):
+    client = make_client(tmp_path)
+
+    bad_login_response = client.post(
+        "/login",
+        data={"username": "admin", "password": "wrong"},
+        follow_redirects=False,
+    )
+    login(client)
+    logged_in_response = client.get("/projects")
+    logout_response = client.post("/logout", follow_redirects=False)
+    after_logout_response = client.get("/projects", follow_redirects=False)
+
+    assert bad_login_response.status_code == 401
+    assert "账号或密码不正确" in bad_login_response.text
+    assert logged_in_response.status_code == 200
+    assert logout_response.status_code == 303
+    assert logout_response.headers["location"] == "/login"
+    assert after_logout_response.status_code == 303
+    assert after_logout_response.headers["location"] == "/login"
+
+
+def test_dashboard_defaults_to_current_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert f"{date.today().year} 年度执行看板" in response.text
+
+
+def test_settings_update_changes_renewal_window_on_dashboard(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    today = date.today()
+    contract_end = today + timedelta(days=30)
+    client.post(
+        "/projects",
+        data={"year": str(today.year), "name": "续采窗口项目", "budget_amount": "30000"},
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": str(today.year),
+            "name": "续采窗口项目",
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "contract_start": today.isoformat(),
+            "contract_end": contract_end.isoformat(),
+            "notes": "",
+        },
+    )
+
+    client.post("/settings", data={"renewal_lead_days": "10"})
+    narrow_response = client.get(f"/?year={today.year}")
+    client.post("/settings", data={"renewal_lead_days": "40"})
+    wide_response = client.get(f"/?year={today.year}")
+
+    assert "暂无提醒期内到期的合同" in narrow_response.text
+    assert "启动下一期采购" in wide_response.text
+
+
+def test_settings_rejects_non_numeric_renewal_days_with_form_validation(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.post(
+        "/settings",
+        data={"renewal_lead_days": "not-a-number"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("renewal_days", ["0", "-5"])
+def test_settings_rejects_non_positive_renewal_days(tmp_path, renewal_days):
+    client = make_client(tmp_path)
+    login(client)
+    client.post("/settings", data={"renewal_lead_days": "30"})
+
+    response = client.post(
+        "/settings",
+        data={"renewal_lead_days": renewal_days},
+        follow_redirects=False,
+    )
+    settings_response = client.get("/settings")
+
+    assert response.status_code == 400
+    assert "续采提醒提前天数必须大于 0" in response.text
+    assert 'value="30"' in settings_response.text
+
+
 def test_project_list_is_first_navigation_item(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -60,6 +177,58 @@ def test_new_project_is_not_in_top_navigation_but_kept_in_toolbar(tmp_path):
     header_html = response.text.split("</header>", maxsplit=1)[0]
     assert 'href="/projects/new">新增项目' not in header_html
     assert 'href="/projects/new">新增项目' in response.text
+
+
+def test_new_project_defaults_to_next_calendar_year(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.get("/projects/new")
+
+    assert response.status_code == 200
+    assert f'name="year" type="number" value="{date.today().year + 1}"' in response.text
+
+
+def test_create_project_rejects_blank_name_and_invalid_budget(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    blank_name_response = client.post(
+        "/projects",
+        data={"year": "2027", "name": "   ", "budget_amount": "100"},
+        follow_redirects=False,
+    )
+    invalid_budget_response = client.post(
+        "/projects",
+        data={"year": "2027", "name": "非法金额项目", "budget_amount": "abc"},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        projects = session.exec(select(Project)).all()
+
+    assert blank_name_response.status_code == 400
+    assert "项目名称不能为空" in blank_name_response.text
+    assert invalid_budget_response.status_code == 400
+    assert "预算金额格式不正确" in invalid_budget_response.text
+    assert projects == []
+
+
+@pytest.mark.parametrize("budget_amount", ["inf", "-inf", "1e309"])
+def test_create_project_rejects_non_finite_budget_amount(tmp_path, budget_amount):
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.post(
+        "/projects",
+        data={"year": "2027", "name": "非有限金额项目", "budget_amount": budget_amount},
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        projects = session.exec(select(Project)).all()
+
+    assert response.status_code == 400
+    assert "预算金额格式不正确" in response.text
+    assert projects == []
 
 
 def test_login_create_project_and_show_it_on_dashboard(tmp_path):
@@ -125,8 +294,10 @@ def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
         data={"kind": "signed_contract"},
         files={"file": ("盖章合同.pdf", b"%PDF-1.7 fake", "application/pdf")},
     )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
     client.post(
-        "/projects/1/attachments",
+        f"/annual-executions/{execution.id}/attachments",
         data={"kind": "invoice"},
         files={"file": ("发票.pdf", b"%PDF-1.7 fake", "application/pdf")},
     )
@@ -143,6 +314,8 @@ def test_project_list_shows_all_attachment_types_and_download_links(tmp_path):
     assert "发票.pdf" in response.text
     assert 'href="/attachments/1/preview"' in response.text
     assert 'href="/attachments/1/download"' in response.text
+    assert 'href="/annual-attachments/1/preview"' in response.text
+    assert 'href="/annual-attachments/1/download"' in response.text
     assert 'href="/projects/1/attachments/download-all"' in response.text
     assert '<details class="attachment-type" open>' not in response.text
 
@@ -159,8 +332,10 @@ def test_attachment_preview_download_and_download_all(tmp_path):
         data={"kind": "procurement_basis"},
         files={"file": ("采购依据.pdf", b"%PDF-1.7 fake basis", "application/pdf")},
     )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
     client.post(
-        "/projects/1/attachments",
+        f"/annual-executions/{execution.id}/attachments",
         data={"kind": "invoice"},
         files={"file": ("发票.pdf", b"%PDF-1.7 fake invoice", "application/pdf")},
     )
@@ -186,6 +361,88 @@ def test_attachment_preview_download_and_download_all(tmp_path):
         names = attachments_zip.namelist()
         assert any(name.endswith("采购依据.pdf") for name in names)
         assert any(name.endswith("发票.pdf") for name in names)
+
+
+def test_empty_project_attachment_zip_download_is_valid_empty_zip(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "暂无附件项目", "budget_amount": "50000"},
+    )
+
+    response = client.get("/projects/1/attachments/download-all")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    assert "project-1-attachments.zip" in response.headers["content-disposition"]
+    zip_path = tmp_path / "empty-attachments.zip"
+    zip_path.write_bytes(response.content)
+    with ZipFile(zip_path) as attachments_zip:
+        assert attachments_zip.namelist() == []
+
+
+def test_project_attachment_file_routes_do_not_return_files_outside_data_dir(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    outside_file = tmp_path / "outside-project.pdf"
+    outside_file.write_bytes(b"%PDF-1.7 outside project")
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "越界读取项目", "budget_amount": "50000"},
+    )
+    with Session(client.app.state.engine) as session:
+        attachment = Attachment(
+            project_id=1,
+            kind=AttachmentKind.PROCUREMENT_BASIS,
+            original_filename="外部项目文件.pdf",
+            stored_path="../outside-project.pdf",
+        )
+        session.add(attachment)
+        session.commit()
+        session.refresh(attachment)
+        attachment_id = attachment.id
+
+    preview_response = client.get(f"/attachments/{attachment_id}/preview")
+    inline_response = client.get(f"/attachments/{attachment_id}/file")
+    download_response = client.get(f"/attachments/{attachment_id}/download")
+
+    assert preview_response.status_code == 200
+    assert preview_response.content != outside_file.read_bytes()
+    assert inline_response.content != outside_file.read_bytes()
+    assert download_response.content != outside_file.read_bytes()
+
+
+def test_annual_attachment_file_routes_do_not_return_files_outside_data_dir(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    outside_file = tmp_path / "outside-annual.pdf"
+    outside_file.write_bytes(b"%PDF-1.7 outside annual")
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度越界读取项目", "budget_amount": "50000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+        attachment = AnnualAttachment(
+            execution_id=execution.id,
+            kind=AttachmentKind.ACCEPTANCE,
+            original_filename="外部年度文件.pdf",
+            stored_path="../outside-annual.pdf",
+        )
+        session.add(attachment)
+        session.commit()
+        session.refresh(attachment)
+        attachment_id = attachment.id
+
+    preview_response = client.get(f"/annual-attachments/{attachment_id}/preview")
+    inline_response = client.get(f"/annual-attachments/{attachment_id}/file")
+    download_response = client.get(f"/annual-attachments/{attachment_id}/download")
+
+    assert preview_response.status_code == 200
+    assert preview_response.content != outside_file.read_bytes()
+    assert inline_response.content != outside_file.read_bytes()
+    assert download_response.content != outside_file.read_bytes()
 
 
 def test_project_attachment_can_be_deleted_from_detail_and_preview(tmp_path):
@@ -286,6 +543,20 @@ def test_project_list_can_filter_by_year(tmp_path):
     assert '<select name="year" onchange="this.form.submit()">' in filtered_response.text
 
 
+def test_project_list_invalid_year_filter_should_fall_back_to_all_projects(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "异常筛选保护项目", "budget_amount": "100"},
+    )
+
+    response = client.get("/projects?year=bad")
+
+    assert response.status_code == 200
+    assert "异常筛选保护项目" in response.text
+
+
 def test_project_ledger_money_and_contract_period_are_polished(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -369,13 +640,21 @@ def test_project_list_search_status_filter_summary_and_money_format(tmp_path):
             "notes": "",
         },
     )
+    client.post(
+        "/projects/2/attachments",
+        data={"kind": "signed_contract"},
+        files={"file": ("盖章合同.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    with Session(client.app.state.engine) as session:
+        completed_execution = session.exec(
+            select(AnnualExecution).where(AnnualExecution.project_id == 2)
+        ).one()
     for kind, filename in [
-        ("signed_contract", "盖章合同.pdf"),
         ("acceptance", "验收单.pdf"),
         ("invoice", "发票.pdf"),
     ]:
         client.post(
-            "/projects/2/attachments",
+            f"/annual-executions/{completed_execution.id}/attachments",
             data={"kind": kind},
             files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
         )
@@ -424,15 +703,20 @@ def test_project_list_search_status_filter_summary_and_money_format(tmp_path):
             "notes": "",
         },
     )
-    for kind, filename in [
-        ("signed_contract", "待付款盖章合同.pdf"),
-        ("acceptance", "待付款验收单.pdf"),
-    ]:
-        client.post(
-            "/projects/5/attachments",
-            data={"kind": kind},
-            files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
-        )
+    client.post(
+        "/projects/5/attachments",
+        data={"kind": "signed_contract"},
+        files={"file": ("待付款盖章合同.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    with Session(client.app.state.engine) as session:
+        unpaid_execution = session.exec(
+            select(AnnualExecution).where(AnnualExecution.project_id == 5)
+        ).one()
+    client.post(
+        f"/annual-executions/{unpaid_execution.id}/attachments",
+        data={"kind": "acceptance"},
+        files={"file": ("待付款验收单.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
 
     response = client.get("/projects?q=堡垒机&status=incomplete")
     completed_response = client.get("/projects?status=completed")
@@ -457,6 +741,38 @@ def test_project_list_search_status_filter_summary_and_money_format(tmp_path):
     assert "未签合同项目" in unsigned_response.text
     assert "待验收项目" in unaccepted_response.text
     assert "待付款项目" in unpaid_response.text
+
+
+def test_project_list_searches_annual_execution_notes(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={
+            "year": "2027",
+            "name": "年度备注检索项目",
+            "budget_amount": "12000",
+            "notes": "项目主档没有目标词",
+        },
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+    client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "12000",
+            "contract_amount": "",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "年度执行备注包含堡垒机续保",
+        },
+    )
+
+    response = client.get("/projects?q=堡垒机续保")
+
+    assert response.status_code == 200
+    assert "年度备注检索项目" in response.text
+    assert 'value="堡垒机续保"' in response.text
 
 
 def test_project_list_exports_filtered_year_to_excel(tmp_path):
@@ -629,6 +945,112 @@ def test_project_detail_back_link_preserves_ledger_year_filter(tmp_path):
     assert 'href="/projects/1?return_year=2026"' in ledger_response.text
     assert detail_response.status_code == 200
     assert 'href="/projects?year=2026"' in detail_response.text
+
+
+def test_project_edit_rejects_contract_start_after_contract_end(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "合同日期保护项目", "budget_amount": "30000"},
+    )
+
+    response = client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "合同日期保护项目",
+            "budget_amount": "30000",
+            "contract_amount": "30000",
+            "contract_start": "2028-01-01",
+            "contract_end": "2027-12-31",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    detail_response = client.get("/projects/1")
+    with Session(client.app.state.engine) as session:
+        project = session.get(Project, 1)
+
+    assert response.status_code == 400
+    assert "合同开始日期不能晚于合同结束日期" in response.text
+    assert project.contract_start is None
+    assert project.contract_end is None
+    assert "2028-01-01" not in detail_response.text
+
+
+def test_project_edit_rejects_blank_name_and_invalid_date(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "编辑保护项目", "budget_amount": "30000"},
+    )
+
+    blank_name_response = client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "   ",
+            "budget_amount": "30000",
+            "contract_amount": "",
+            "contract_start": "",
+            "contract_end": "",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    invalid_date_response = client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "编辑保护项目",
+            "budget_amount": "30000",
+            "contract_amount": "",
+            "contract_start": "bad-date",
+            "contract_end": "",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        project = session.get(Project, 1)
+
+    assert blank_name_response.status_code == 400
+    assert "项目名称不能为空" in blank_name_response.text
+    assert invalid_date_response.status_code == 400
+    assert "合同开始日期格式不正确" in invalid_date_response.text
+    assert project.name == "编辑保护项目"
+    assert project.contract_start is None
+
+
+def test_project_edit_rejects_non_finite_contract_amount(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "合同金额保护项目", "budget_amount": "30000"},
+    )
+
+    response = client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "合同金额保护项目",
+            "budget_amount": "30000",
+            "contract_amount": "inf",
+            "contract_start": "",
+            "contract_end": "",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        project = session.get(Project, 1)
+
+    assert response.status_code == 400
+    assert "合同总额格式不正确" in response.text
+    assert project.contract_amount is None
 
 
 def test_project_detail_save_forms_preserve_scroll_position(tmp_path):
@@ -811,6 +1233,262 @@ def test_annual_execution_detail_edit_and_annual_attachment_upload(tmp_path):
     assert "2027发票.pdf" in updated_response.text
 
 
+def test_annual_execution_edit_rejects_invalid_amount_and_date(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度输入保护项目", "budget_amount": "60000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    invalid_amount_response = client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "abc",
+            "contract_amount": "",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    invalid_date_response = client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "60000",
+            "contract_amount": "",
+            "acceptance_date": "",
+            "payment_date": "bad-date",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        updated_execution = session.get(AnnualExecution, execution.id)
+
+    assert invalid_amount_response.status_code == 400
+    assert "年度预算格式不正确" in invalid_amount_response.text
+    assert invalid_date_response.status_code == 400
+    assert "付款日期格式不正确" in invalid_date_response.text
+    assert updated_execution.budget_amount == 60000
+    assert updated_execution.payment_date is None
+
+
+def test_annual_execution_edit_rejects_non_finite_budget_amount(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "年度非有限金额项目", "budget_amount": "60000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    response = client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "inf",
+            "contract_amount": "",
+            "acceptance_date": "",
+            "payment_date": "",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+    with Session(client.app.state.engine) as session:
+        updated_execution = session.get(AnnualExecution, execution.id)
+
+    assert response.status_code == 400
+    assert "年度预算格式不正确" in response.text
+    assert updated_execution.budget_amount == 60000
+
+
+def test_project_attachment_upload_rejects_annual_attachment_kind(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "错误附件类型项目", "budget_amount": "60000"},
+    )
+
+    response = client.post(
+        "/projects/1/attachments",
+        data={"kind": "invoice"},
+        files={"file": ("发票.pdf", b"%PDF-1.7 fake", "application/pdf")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "项目级附件只支持" in response.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("采购依据.pdf", b"not a pdf"),
+        ("采购依据.txt", b"%PDF-1.7 fake"),
+    ],
+)
+def test_project_attachment_upload_invalid_pdf_returns_controlled_error(
+    tmp_path,
+    filename,
+    content,
+):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "非法项目级附件项目", "budget_amount": "60000"},
+    )
+
+    response = client.post(
+        "/projects/1/attachments",
+        data={"kind": "procurement_basis"},
+        files={"file": (filename, content, "application/pdf")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "只支持上传 PDF 文件" in response.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("验收单.pdf", b"not a pdf"),
+        ("验收单.txt", b"%PDF-1.7 fake"),
+    ],
+)
+def test_annual_attachment_upload_invalid_pdf_returns_controlled_error(
+    tmp_path,
+    filename,
+    content,
+):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={"year": "2027", "name": "非法年度附件项目", "budget_amount": "60000"},
+    )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    response = client.post(
+        f"/annual-executions/{execution.id}/attachments",
+        data={"kind": "acceptance"},
+        files={"file": (filename, content, "application/pdf")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "只支持上传 PDF 文件" in response.text
+
+
+def test_full_business_flow_reaches_completed_status_and_exports_artifacts(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+    client.post(
+        "/projects",
+        data={
+            "year": "2027",
+            "name": "完整闭环项目",
+            "budget_amount": "50000",
+            "notes": "年度预算项目",
+        },
+    )
+    client.post(
+        "/projects/1/edit",
+        data={
+            "year": "2027",
+            "name": "完整闭环项目",
+            "budget_amount": "50000",
+            "contract_amount": "48000",
+            "contract_start": "2027-01-01",
+            "contract_end": "2027-12-31",
+            "notes": "年度预算项目",
+        },
+    )
+    for kind, filename in [
+        ("procurement_basis", "采购依据.pdf"),
+        ("contract_review", "合同审签.pdf"),
+        ("signed_contract", "盖章合同.pdf"),
+        ("other", "补充说明.pdf"),
+    ]:
+        client.post(
+            "/projects/1/attachments",
+            data={"kind": kind},
+            files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
+        )
+    with Session(client.app.state.engine) as session:
+        execution = session.exec(select(AnnualExecution)).one()
+
+    client.post(
+        f"/annual-executions/{execution.id}/edit",
+        data={
+            "budget_amount": "50000",
+            "contract_amount": "48000",
+            "acceptance_date": "2027-12-31",
+            "payment_date": "2028-01-15",
+            "notes": "按合同完成验收付款",
+        },
+    )
+    for kind, filename in [
+        ("acceptance", "验收单.pdf"),
+        ("invoice", "发票.pdf"),
+    ]:
+        client.post(
+            f"/annual-executions/{execution.id}/attachments",
+            data={"kind": kind},
+            files={"file": (filename, b"%PDF-1.7 fake", "application/pdf")},
+        )
+
+    completed_response = client.get("/projects?year=2027&status=completed")
+    excel_response = client.get("/projects/export?year=2027&status=completed")
+    all_zip_response = client.get("/projects/1/attachments/download-all")
+    year_zip_response = client.get(
+        f"/annual-executions/{execution.id}/attachments/download-year"
+    )
+
+    assert completed_response.status_code == 200
+    assert "完整闭环项目" in completed_response.text
+    assert "合同已签" in completed_response.text
+    assert "已验收" in completed_response.text
+    assert "已付款" in completed_response.text
+
+    workbook_path = tmp_path / "completed-export.xlsx"
+    workbook_path.write_bytes(excel_response.content)
+    workbook = load_workbook(workbook_path)
+    sheet = workbook.active
+    assert sheet["A3"].value == 2027
+    assert sheet["B3"].value == "完整闭环项目"
+    assert sheet["C3"].value == 50000
+    assert sheet["D3"].value == 48000
+    assert sheet["F3"].number_format == "yyyy-mm-dd"
+    assert sheet["G3"].number_format == "yyyy-mm-dd"
+    assert sheet["H3"].number_format == "yyyy-mm-dd"
+    assert sheet["I3"].number_format == "yyyy-mm-dd"
+
+    all_zip_path = tmp_path / "all-attachments.zip"
+    all_zip_path.write_bytes(all_zip_response.content)
+    with ZipFile(all_zip_path) as attachments_zip:
+        names = attachments_zip.namelist()
+        assert any(name.endswith("采购依据.pdf") for name in names)
+        assert any(name.endswith("合同审签.pdf") for name in names)
+        assert any(name.endswith("盖章合同.pdf") for name in names)
+        assert any(name.endswith("验收单.pdf") for name in names)
+        assert any(name.endswith("发票.pdf") for name in names)
+
+    year_zip_path = tmp_path / "year-attachments.zip"
+    year_zip_path.write_bytes(year_zip_response.content)
+    with ZipFile(year_zip_path) as attachments_zip:
+        names = attachments_zip.namelist()
+        assert any(name.startswith("项目资料/采购依据/") for name in names)
+        assert any(name.startswith("年度资料/验收单/") for name in names)
+        assert any(name.startswith("年度资料/发票/") for name in names)
+
+
 def test_annual_attachment_upload_controls_use_aligned_grid(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -898,6 +1576,37 @@ def test_project_detail_can_delete_project_after_confirmation(tmp_path):
     assert delete_response.status_code == 303
     assert delete_response.headers["location"] == "/projects?year=2027"
     assert deleted_project is None
+
+
+def test_deleting_missing_project_or_attachment_redirects_safely(tmp_path):
+    client = make_client(tmp_path)
+    login(client)
+
+    missing_project_response = client.post(
+        "/projects/999/delete",
+        follow_redirects=False,
+    )
+    missing_attachment_response = client.post(
+        "/attachments/999/delete",
+        follow_redirects=False,
+    )
+    missing_annual_attachment_response = client.post(
+        "/annual-attachments/999/delete",
+        follow_redirects=False,
+    )
+    missing_preview_response = client.get(
+        "/attachments/999/preview",
+        follow_redirects=False,
+    )
+
+    assert missing_project_response.status_code == 303
+    assert missing_project_response.headers["location"] == "/projects"
+    assert missing_attachment_response.status_code == 303
+    assert missing_attachment_response.headers["location"] == "/projects"
+    assert missing_annual_attachment_response.status_code == 303
+    assert missing_annual_attachment_response.headers["location"] == "/projects"
+    assert missing_preview_response.status_code == 303
+    assert missing_preview_response.headers["location"] == "/projects"
 
 
 def test_project_ledger_can_delete_project_and_keep_filters(tmp_path):
@@ -1015,3 +1724,30 @@ def test_excel_export_uses_annual_execution_rows(tmp_path):
     assert sheet["B3"].value == "三年云平台服务"
     assert sheet["C3"].value == 100000
     assert sheet["D3"].value == 90000
+
+
+def test_runtime_configuration_docs_and_start_script_match_mvp_contract():
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+    start_script = Path("scripts/start.ps1").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+    startup_doc = Path("启动停止重启说明.md").read_text(encoding="utf-8")
+
+    for key in [
+        "PROJMAN_USERNAME",
+        "PROJMAN_PASSWORD",
+        "PROJMAN_SECRET_KEY",
+        "PROJMAN_DATABASE_URL",
+        "PROJMAN_DATA_DIR",
+    ]:
+        assert key in env_example
+        assert key in startup_doc
+
+    assert 'Test-Path ".env"' in start_script
+    assert 'uv venv .venv' in start_script
+    assert 'uv run uvicorn app.main:app --host 0.0.0.0 --port 8765' in start_script
+    assert 'PROJMAN_USERNAME = "admin"' in start_script
+    assert 'PROJMAN_PASSWORD = "admin"' in start_script
+    assert "http://127.0.0.1:8765" in readme
+    assert "data/app.db" in readme
+    assert "data/attachments/" in readme
+    assert "data/annual_attachments/" in readme

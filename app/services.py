@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
+import math
 from pathlib import Path
 from typing import Any
 
@@ -95,9 +96,13 @@ def create_project(
     budget_amount: float | None = None,
     notes: str = "",
 ) -> Project:
+    project_name = name.strip()
+    if not project_name:
+        raise ValueError("项目名称不能为空")
+    budget_amount = _validate_money(budget_amount, "预算金额")
     project = Project(
         year=year,
-        name=name.strip(),
+        name=project_name,
         budget_amount=budget_amount,
         notes=notes.strip(),
     )
@@ -111,6 +116,20 @@ def update_project(session: Session, project_id: int, **changes: Any) -> Project
     project = session.get(Project, project_id)
     if project is None:
         raise ValueError("项目不存在")
+    changes = dict(changes)
+    if "name" in changes:
+        project_name = str(changes["name"]).strip()
+        if not project_name:
+            raise ValueError("项目名称不能为空")
+        changes["name"] = project_name
+    if "budget_amount" in changes:
+        changes["budget_amount"] = _validate_money(changes["budget_amount"], "预算金额")
+    if "contract_amount" in changes:
+        changes["contract_amount"] = _validate_money(changes["contract_amount"], "合同金额")
+    contract_start = changes.get("contract_start", project.contract_start)
+    contract_end = changes.get("contract_end", project.contract_end)
+    if contract_start and contract_end and contract_start > contract_end:
+        raise ValueError("合同开始日期不能晚于合同结束日期")
     for key, value in changes.items():
         if hasattr(project, key):
             setattr(project, key, value)
@@ -182,6 +201,8 @@ def save_attachment_bytes(
     original_filename: str,
     content: bytes,
 ) -> Attachment:
+    if kind not in PROJECT_ATTACHMENT_KINDS:
+        raise ValueError("项目级附件只支持采购依据、合同审签 PDF、盖章合同扫描件和其他附件")
     if not original_filename.lower().endswith(".pdf") or not content.startswith(b"%PDF"):
         raise ValueError("只支持上传 PDF 文件")
     if project.id is None:
@@ -340,6 +361,14 @@ def update_annual_execution(
     execution = session.get(AnnualExecution, execution_id)
     if execution is None:
         raise ValueError("年度执行记录不存在")
+    changes = dict(changes)
+    if "budget_amount" in changes:
+        changes["budget_amount"] = _validate_money(changes["budget_amount"], "年度预算")
+    if "contract_amount" in changes:
+        changes["contract_amount"] = _validate_money(
+            changes["contract_amount"],
+            "年度合同金额",
+        )
     amount_fields = {"budget_amount", "contract_amount", "contract_only"}
     for key, value in changes.items():
         if hasattr(execution, key):
@@ -731,16 +760,13 @@ def _delete_annual_execution(
 
 
 def _delete_stored_file(data_dir: Path, stored_path: str) -> None:
-    base_dir = data_dir.resolve()
-    file_path = (data_dir / stored_path).resolve()
-    try:
-        file_path.relative_to(base_dir)
-    except ValueError:
+    file_path = resolve_stored_file(data_dir, stored_path)
+    if file_path is None:
         return
 
-    if file_path.is_file():
-        file_path.unlink()
+    file_path.unlink()
 
+    base_dir = data_dir.resolve()
     parent = file_path.parent
     while parent != base_dir and parent.exists():
         try:
@@ -748,6 +774,24 @@ def _delete_stored_file(data_dir: Path, stored_path: str) -> None:
         except OSError:
             break
         parent = parent.parent
+
+
+def resolve_stored_file(data_dir: Path, stored_path: str) -> Path | None:
+    base_dir = data_dir.resolve()
+    file_path = (data_dir / stored_path).resolve()
+    try:
+        file_path.relative_to(base_dir)
+    except ValueError:
+        return None
+    return file_path if file_path.is_file() else None
+
+
+def _validate_money(value: float | None, field_label: str) -> float | None:
+    if value is None:
+        return None
+    if not math.isfinite(value):
+        raise ValueError(f"{field_label}格式不正确")
+    return value
 
 
 def _compute_annual_status(

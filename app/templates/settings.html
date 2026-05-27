@@ -7,11 +7,73 @@
     <p>本地运行参数</p>
   </div>
 </section>
-<section class="panel narrow">
-  <form method="post" action="/settings" class="form-grid">
-    <label>续采提醒提前天数
-      <input name="renewal_lead_days" type="number" min="1" max="365" value="{{ renewal_lead_days }}" required>
+<section class="panel settings-panel">
+  <form method="post" action="/settings" class="settings-form">
+    <section class="settings-section">
+      <div class="settings-section-head">
+        <h2>基础参数</h2>
+      </div>
+      <div class="settings-grid">
+        <label class="setting-field">续采提醒提前天数
+          <input name="renewal_lead_days" type="number" min="1" max="365" value="{{ renewal_lead_days }}" required>
+        </label>
+      </div>
+    </section>
+    <section class="settings-section">
+      <div class="settings-section-head">
+        <h2>AI 功能设置</h2>
+        <p>
+          当前状态：
+          {% if ai_settings.enabled %}
+            <strong class="status-text ok">AI 已启用</strong>
+          {% else %}
+            <strong class="status-text muted">AI 未启用</strong>
+          {% endif %}
+          ·
+          {% if ai_api_key_configured %}
+            <span>API Key 已配置</span>
+          {% else %}
+            <span>API Key 未配置</span>
+          {% endif %}
+        </p>
+      </div>
+      <p class="settings-hint">保存后写入本项目 .env；API Key 在本页明文显示，方便核对。</p>
+      <div class="settings-grid">
+    <input type="hidden" name="ai_settings_submitted" value="1">
+    <div class="switch-row">
+      <span>AI 总开关</span>
+      <label class="switch-control">
+        <input name="ai_enabled" type="checkbox" value="on" {% if ai_settings.enabled %}checked{% endif %}>
+        <span class="switch-slider"></span>
+        <span class="switch-copy">{% if ai_settings.enabled %}已启用{% else %}已停用{% endif %}</span>
+      </label>
+    </div>
+    <label class="setting-field setting-field-wide">API Key
+      <input name="ai_api_key" type="text" autocomplete="off" value="{{ ai_settings.api_key or '' }}" placeholder="填写后才能启用 AI">
     </label>
+    <label class="setting-field">模型
+      <input name="ai_model" value="{{ ai_settings.model }}" placeholder="qwen3-vl-plus">
+    </label>
+    <label class="setting-field setting-field-wide">Base URL
+      <input name="ai_base_url" value="{{ ai_settings.base_url }}" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+    </label>
+    <label class="setting-field">代理
+      <input name="ai_proxy" value="{{ ai_settings.proxy or '' }}" placeholder="例如 http://127.0.0.1:7890">
+    </label>
+    <label class="setting-field">
+      超时秒数
+      <input name="ai_timeout_seconds" type="number" min="1" value="{{ ai_settings.timeout_seconds }}">
+    </label>
+    <label class="setting-field">
+      上传上限 MB
+      <input name="ai_max_upload_mb" type="number" min="1" value="{{ ai_settings.max_upload_mb }}">
+    </label>
+    <label class="setting-field">
+      草稿保留小时
+      <input name="ai_draft_ttl_hours" type="number" min="1" value="{{ ai_settings.draft_ttl_hours }}">
+    </label>
+      </div>
+    </section>
     <div class="actions"><button type="submit">保存设置</button></div>
   </form>
 </section>

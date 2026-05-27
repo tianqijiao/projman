@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}AI 建档{% endblock %}
+
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>AI 建档</h1>
+    <p class="muted">AI 结果仅供参考，创建项目必须经过人工确认。</p>
+  </div>
+  <a class="button ghost" href="/projects">返回台账</a>
+</section>
+
+{% if ai_disabled %}
+  <section class="notice warning">AI 功能未启用。你仍可以查看入口说明；正式识别前请在配置中启用 AI 并设置 API key。</section>
+{% endif %}
+
+{% if error %}
+  <section class="notice warning">{{ error }}</section>
+{% endif %}
+
+<section class="panel">
+  <form class="stacked-form" method="post" action="/ai-projects/drafts" enctype="multipart/form-data" data-ai-draft-form data-ai-async-form>
+    <div class="ai-input-note">
+      <strong>上传前请确认</strong>
+      <span>PDF 会先提取文字；如果是扫描件或图片型 PDF，会自动转成页面图片识别。加密、损坏或过暗的 PDF 可能需要换文件或补充文字说明。</span>
+    </div>
+    <label class="ai-file-field">
+      <span>上传材料（PDF / 图片）</span>
+      <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp">
+      <small>重新选择 PDF / 图片后，点击下方“开始识别”。</small>
+    </label>
+    <label>
+      <span>文字说明</span>
+      <textarea name="text" rows="8" placeholder="例如：2027 年行政电脑维护服务，预算 5 万，合同金额 4.8 万，服务期 2027-01-01 到 2027-12-31。"></textarea>
+    </label>
+    <p class="muted">支持 PDF、图片和文字；图片仅用于识别，不默认作为正式附件。</p>
+    <div class="ai-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="正在识别" aria-hidden="true">
+      <div class="ai-progress-head">
+        <p data-ai-progress-message>正在识别材料，PDF 扫描件会先转换为页面图片，请稍等。</p>
+        <strong data-ai-progress-percent>0%</strong>
+      </div>
+      <div class="ai-progress-track"><span data-ai-progress-fill style="width: 0%;"></span></div>
+      <ol class="ai-progress-steps">
+        <li class="is-active" data-ai-stage="0">上传材料</li>
+        <li data-ai-stage="1">解析 PDF</li>
+        <li data-ai-stage="2">调用 AI 识别</li>
+        <li data-ai-stage="3">生成草稿</li>
+      </ol>
+    </div>
+    <div class="button-row">
+      <a class="button ghost" href="/ai-projects/new">清空重选</a>
+      <button type="submit">开始识别</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

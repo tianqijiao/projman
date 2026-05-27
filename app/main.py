@@ -14,9 +14,24 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, SQLModel, create_engine
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.ai_project import (
+    AiProjectClientError,
+    DashScopeAiProjectClient,
+    SUPPORTED_AI_EXTENSIONS,
+    cleanup_ai_input_file,
+    cleanup_expired_ai_drafts,
+    create_ai_draft,
+    draft_field_value,
+    draft_fields,
+    draft_risk_tips,
+    extract_pdf_text,
+    load_ai_settings,
+    render_pdf_pages,
+    store_ai_input_file,
+)
 from app.domain import AttachmentKind
 from app.exporters import build_projects_excel
-from app.models import AnnualAttachment, AnnualExecution, Attachment, Project
+from app.models import AiProjectDraft, AnnualAttachment, AnnualExecution, Attachment, Project
 from app.services import (
     ANNUAL_ATTACHMENT_KINDS,
     PROJECT_ATTACHMENT_KINDS,
@@ -52,6 +67,7 @@ def create_app(
     *,
     database_url: str = "sqlite:///data/app.db",
     data_dir: Path | str = Path("data"),
+    env_file: Path | str | None = None,
     username: str = "admin",
     password: str = "admin",
     secret_key: str = "change-me-in-env",
@@ -64,8 +80,11 @@ def create_app(
 
     app.state.engine = engine
     app.state.data_dir = data_path
+    app.state.env_path = Path(env_file) if env_file is not None else data_path.parent / ".env"
+    app.state.ai_env_overrides = {}
     app.state.username = username
     app.state.password = password
+    app.state.ai_project_client = None
     app.add_middleware(SessionMiddleware, secret_key=secret_key, same_site="lax")
     app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
@@ -150,6 +169,7 @@ def create_app(
                 "renewal_lead_days": get_int_setting(
                     session, "renewal_lead_days", default=60
                 ),
+                **_ai_settings_context(app),
             },
         )
 
@@ -158,13 +178,333 @@ def create_app(
         request: Request,
         session: Annotated[Session, Depends(get_session)],
         renewal_lead_days: Annotated[int, Form()],
+        ai_settings_submitted: Annotated[str, Form()] = "",
+        ai_enabled: Annotated[str, Form()] = "false",
+        ai_api_key: Annotated[str, Form()] = "",
+        ai_model: Annotated[str, Form()] = "",
+        ai_base_url: Annotated[str, Form()] = "",
+        ai_proxy: Annotated[str, Form()] = "",
+        ai_timeout_seconds: Annotated[str, Form()] = "",
+        ai_max_upload_mb: Annotated[str, Form()] = "",
+        ai_draft_ttl_hours: Annotated[str, Form()] = "",
     ):
         if redirect := login_redirect(request):
             return redirect
         if renewal_lead_days < 1:
             return _bad_request("续采提醒提前天数必须大于 0")
         set_int_setting(session, "renewal_lead_days", renewal_lead_days)
+        if ai_settings_submitted:
+            try:
+                _save_ai_settings_from_form(
+                    app,
+                    enabled=ai_enabled.lower() in {"true", "on", "1", "yes"},
+                    api_key=ai_api_key,
+                    model=ai_model,
+                    base_url=ai_base_url,
+                    proxy=ai_proxy,
+                    timeout_seconds=ai_timeout_seconds,
+                    max_upload_mb=ai_max_upload_mb,
+                    draft_ttl_hours=ai_draft_ttl_hours,
+                )
+            except ValueError as exc:
+                return _bad_request(str(exc))
         return RedirectResponse("/settings", status_code=303)
+
+    @app.get("/ai-projects/new")
+    def ai_new_project_page(
+        request: Request,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        settings = _load_ai_settings(app)
+        cleanup_expired_ai_drafts(
+            session,
+            data_dir=app.state.data_dir,
+            ttl_hours=settings.draft_ttl_hours,
+        )
+        return templates.TemplateResponse(
+            request,
+            "ai_project_new.html",
+            _ai_page_context(app, settings=settings),
+        )
+
+    @app.post("/ai-projects/drafts")
+    async def create_ai_project_draft_route(
+        request: Request,
+        session: Annotated[Session, Depends(get_session)],
+        text: Annotated[str, Form()] = "",
+        file: Annotated[UploadFile | None, File()] = None,
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+
+        settings = _load_ai_settings(app)
+        if not settings.enabled:
+            return _bad_request("AI 功能未启用")
+        if settings.enabled and not settings.api_key:
+            return _bad_request("AI 功能已启用，但未配置 API key")
+        ai_client = app.state.ai_project_client
+        if ai_client is None:
+            ai_client = DashScopeAiProjectClient(settings)
+
+        text_input = text.strip()
+        uploaded_filename = (file.filename or "").strip() if file is not None else ""
+        if not text_input and not uploaded_filename:
+            return _ai_form_error_response(app, request, "请至少提供文字或上传文件")
+
+        stored_input_path = ""
+        input_filename = ""
+        input_content_type = ""
+        input_kind = "text"
+        ai_text = text_input
+        file_bytes: bytes | None = None
+        image_files = None
+        source_pages: list[int] = []
+
+        if uploaded_filename:
+            content = await file.read()
+            extension = Path(uploaded_filename).suffix.lower()
+            if extension not in SUPPORTED_AI_EXTENSIONS:
+                return _ai_form_error_response(app, request, "仅支持 PDF、PNG、JPG、JPEG、WebP")
+            if len(content) > settings.max_upload_mb * 1_000_000:
+                return _ai_form_error_response(
+                    app,
+                    request,
+                    "文件过大，请压缩到限制以内后再上传",
+                )
+            input_filename = uploaded_filename
+            input_content_type = file.content_type or ""
+            stored_input_path = store_ai_input_file(
+                app.state.data_dir,
+                filename=input_filename,
+                content=content,
+            )
+            if extension == ".pdf":
+                extractor = getattr(app.state, "ai_pdf_text_extractor", extract_pdf_text)
+                try:
+                    pdf_text = extractor(content).strip()
+                except Exception:
+                    cleanup_ai_input_file(app.state.data_dir, stored_input_path)
+                    return _ai_form_error_response(
+                        app,
+                        request,
+                        "PDF 解析失败，请改传图片或输入文字",
+                    )
+                if not pdf_text:
+                    renderer = getattr(app.state, "ai_pdf_image_renderer", render_pdf_pages)
+                    try:
+                        image_files = renderer(content)
+                    except Exception:
+                        image_files = []
+                    if not image_files:
+                        cleanup_ai_input_file(app.state.data_dir, stored_input_path)
+                        return _ai_form_error_response(
+                            app,
+                            request,
+                            "PDF 未提取到可识别文本，也无法生成预览图片，请换一个 PDF、改传图片或输入文字",
+                        )
+                    source_pages = []
+                    for image_file in image_files:
+                        try:
+                            source_pages.append(int(image_file.get("page")))
+                        except (TypeError, ValueError):
+                            continue
+                    ai_text = "\n\n".join(
+                        value
+                        for value in [
+                            text_input,
+                            f"请识别 PDF 图片页：{input_filename}",
+                        ]
+                        if value
+                    )
+                    input_kind = "pdf_image"
+                else:
+                    ai_text = "\n\n".join(
+                        value for value in [text_input, pdf_text] if value
+                    )
+                    input_kind = "pdf_text"
+            else:
+                file_bytes = content
+                input_kind = "image"
+
+        try:
+            ai_request = {
+                "text": ai_text,
+                "file_bytes": file_bytes,
+                "filename": input_filename,
+                "input_kind": input_kind,
+                "source_pages": source_pages,
+            }
+            if image_files is not None:
+                ai_request["image_files"] = image_files
+            ai_response = ai_client.extract_project(**ai_request)
+        except AiProjectClientError as exc:
+            cleanup_ai_input_file(app.state.data_dir, stored_input_path)
+            return templates.TemplateResponse(
+                request,
+                "ai_project_new.html",
+                _ai_page_context(app, error=f"识别失败：{exc} 可重试或手工新建。"),
+                status_code=200,
+            )
+        except Exception:
+            cleanup_ai_input_file(app.state.data_dir, stored_input_path)
+            return templates.TemplateResponse(
+                request,
+                "ai_project_new.html",
+                _ai_page_context(
+                    app,
+                    error=(
+                        "识别失败：AI 服务调用异常。可重试或手工新建；"
+                        "如果是扫描 PDF，请压缩文件或补充文字说明。"
+                    ),
+                ),
+                status_code=200,
+            )
+
+        draft = create_ai_draft(
+            session,
+            input_kind=input_kind,
+            input_filename=input_filename,
+            input_content_type=input_content_type,
+            stored_input_path=stored_input_path,
+            input_text=ai_text,
+            ai_response=ai_response,
+        )
+        return RedirectResponse(f"/ai-projects/drafts/{draft.id}", status_code=303)
+
+    @app.get("/ai-projects/drafts/{draft_id}")
+    def ai_project_draft_page(
+        request: Request,
+        draft_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        draft = _get_ai_draft(session, draft_id)
+        if draft is None:
+            return _bad_request("草稿不存在")
+        return templates.TemplateResponse(
+            request,
+            "ai_project_draft.html",
+            _ai_draft_context(draft),
+        )
+
+    @app.post("/ai-projects/drafts/{draft_id}/confirm")
+    def confirm_ai_project_draft(
+        request: Request,
+        draft_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        year: Annotated[str, Form()],
+        name: Annotated[str, Form()],
+        budget_amount: Annotated[str, Form()] = "",
+        contract_amount: Annotated[str, Form()] = "",
+        contract_start: Annotated[str, Form()] = "",
+        contract_end: Annotated[str, Form()] = "",
+        notes: Annotated[str, Form()] = "",
+        archive_pdf_kind: Annotated[str, Form()] = "",
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        try:
+            parsed_year = int(year.strip())
+            parsed_budget = _parse_float(budget_amount, "预算金额")
+            parsed_contract_amount = _parse_float(contract_amount, "合同金额")
+            parsed_contract_start = _parse_date(contract_start, "合同开始日期")
+            parsed_contract_end = _parse_date(contract_end, "合同结束日期")
+            if (
+                parsed_contract_start
+                and parsed_contract_end
+                and parsed_contract_start > parsed_contract_end
+            ):
+                raise ValueError("合同开始日期不能晚于合同结束日期")
+        except ValueError as exc:
+            return _bad_request(str(exc))
+
+        draft = _get_ai_draft(session, draft_id)
+        if draft is None:
+            return _bad_request("草稿不存在")
+        if draft.status == "abandoned":
+            return _bad_request("草稿已放弃")
+        if draft.status == "created":
+            return _bad_request("草稿已创建项目")
+
+        archive_kind: AttachmentKind | None = None
+        archive_content: bytes | None = None
+        if archive_pdf_kind.strip():
+            try:
+                archive_kind = AttachmentKind(archive_pdf_kind.strip())
+            except ValueError:
+                return _bad_request("附件归档类型不正确")
+            if archive_kind not in PROJECT_ATTACHMENT_KINDS:
+                return _bad_request("附件归档类型不正确")
+            if not draft.input_filename.lower().endswith(".pdf"):
+                return _bad_request("只支持上传 PDF 文件")
+            input_path = resolve_stored_file(app.state.data_dir, draft.stored_input_path)
+            if input_path is None:
+                return _bad_request("AI 输入文件不存在，不能归档")
+            archive_content = input_path.read_bytes()
+            if not archive_content.startswith(b"%PDF"):
+                return _bad_request("只支持上传 PDF 文件")
+
+        try:
+            project = create_project(
+                session,
+                year=parsed_year,
+                name=name,
+                budget_amount=parsed_budget,
+                notes=notes,
+            )
+            update_project(
+                session,
+                project.id,
+                contract_amount=parsed_contract_amount,
+                contract_start=parsed_contract_start,
+                contract_end=parsed_contract_end,
+            )
+        except ValueError as exc:
+            return _bad_request(str(exc))
+        sync_annual_executions(session, project, data_dir=app.state.data_dir)
+
+        if (
+            archive_kind is not None
+            and archive_content is not None
+            and draft.input_filename.lower().endswith(".pdf")
+        ):
+            try:
+                save_attachment_bytes(
+                    session,
+                    project=project,
+                    data_dir=app.state.data_dir,
+                    kind=archive_kind,
+                    original_filename=draft.input_filename,
+                    content=archive_content,
+                )
+            except ValueError as exc:
+                return _bad_request(str(exc))
+        cleanup_ai_input_file(app.state.data_dir, draft.stored_input_path)
+        draft.status = "created"
+        draft.project_id = project.id
+        session.add(draft)
+        session.commit()
+        return RedirectResponse(f"/projects/{project.id}", status_code=303)
+
+    @app.post("/ai-projects/drafts/{draft_id}/abandon")
+    def abandon_ai_project_draft(
+        request: Request,
+        draft_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ):
+        if redirect := login_redirect(request):
+            return redirect
+        draft = _get_ai_draft(session, draft_id)
+        if draft is None:
+            return RedirectResponse("/ai-projects/new", status_code=303)
+        draft.status = "abandoned"
+        session.add(draft)
+        session.commit()
+        cleanup_ai_input_file(app.state.data_dir, draft.stored_input_path)
+        return RedirectResponse("/ai-projects/new", status_code=303)
 
     @app.get("/projects")
     def projects(
@@ -870,6 +1210,201 @@ def _bad_request(message: str) -> Response:
     return Response(message, status_code=400, media_type="text/plain; charset=utf-8")
 
 
+def _load_ai_settings(app: FastAPI):
+    environ = {**os.environ, **getattr(app.state, "ai_env_overrides", {})}
+    return load_ai_settings(
+        environ=environ,
+        read_credentials=getattr(app.state, "ai_credential_reader", None),
+    )
+
+
+def _ai_page_context(
+    app: FastAPI,
+    error: str | None = None,
+    settings=None,
+) -> dict:
+    settings = settings or _load_ai_settings(app)
+    return {
+        "settings": settings,
+        "error": error,
+        "ai_disabled": not settings.enabled,
+    }
+
+
+def _ai_form_error_response(
+    app: FastAPI,
+    request: Request,
+    message: str,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "ai_project_new.html",
+        _ai_page_context(app, error=message),
+        status_code=400,
+    )
+
+
+def _ai_settings_context(app: FastAPI) -> dict:
+    settings = _load_ai_settings(app)
+    return {
+        "ai_settings": settings,
+        "ai_api_key_configured": bool(settings.api_key),
+        "ai_env_path": app.state.env_path,
+    }
+
+
+def _save_ai_settings_from_form(
+    app: FastAPI,
+    *,
+    enabled: bool,
+    api_key: str,
+    model: str,
+    base_url: str,
+    proxy: str,
+    timeout_seconds: str,
+    max_upload_mb: str,
+    draft_ttl_hours: str,
+) -> None:
+    current_settings = _load_ai_settings(app)
+    timeout_value = _parse_positive_int(timeout_seconds or "300", "AI 调用超时时间")
+    upload_value = _parse_positive_int(max_upload_mb or "10", "AI 上传大小上限")
+    ttl_value = _parse_positive_int(draft_ttl_hours or "24", "AI 草稿保留时间")
+    new_api_key = api_key.strip()
+    existing_file_values = _read_env_key_values(app.state.env_path)
+    stored_api_key = (
+        new_api_key
+        or existing_file_values.get("PROJMAN_AI_API_KEY", "")
+        or current_settings.api_key
+        or ""
+    )
+    if enabled and not stored_api_key:
+        raise ValueError("启用 AI 前请填写 API Key")
+
+    updates = {
+        "PROJMAN_AI_ENABLED": "true" if enabled else "false",
+        "PROJMAN_AI_PROVIDER": current_settings.provider or "aliyun_dashscope",
+        "PROJMAN_AI_BASE_URL": (
+            base_url.strip() or current_settings.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ),
+        "PROJMAN_AI_MODEL": model.strip() or current_settings.model or "qwen3-vl-plus",
+        "PROJMAN_AI_API_KEY": stored_api_key,
+        "PROJMAN_AI_CREDENTIAL_SOURCE": "env_then_optional_file",
+        "PROJMAN_AI_CREDENTIAL_FILE": existing_file_values.get(
+            "PROJMAN_AI_CREDENTIAL_FILE",
+            "",
+        ),
+        "PROJMAN_AI_PROXY": proxy.strip(),
+        "PROJMAN_AI_TIMEOUT_SECONDS": str(timeout_value),
+        "PROJMAN_AI_MAX_UPLOAD_MB": str(upload_value),
+        "PROJMAN_AI_DRAFT_TTL_HOURS": str(ttl_value),
+    }
+    _update_env_file(app.state.env_path, updates)
+    app.state.ai_env_overrides = {**getattr(app.state, "ai_env_overrides", {}), **updates}
+
+
+def _parse_positive_int(value: str, field_label: str) -> int:
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        raise ValueError(f"{field_label}必须是整数") from None
+    if parsed < 1:
+        raise ValueError(f"{field_label}必须大于 0")
+    return parsed
+
+
+def _read_env_key_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _update_env_file(path: Path, updates: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    seen: set[str] = set()
+    new_lines: list[str] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            new_lines.append(raw_line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            new_lines.append(raw_line)
+    if new_lines and new_lines[-1].strip():
+        new_lines.append("")
+    for key, value in updates.items():
+        if key not in seen:
+            new_lines.append(f"{key}={value}")
+    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _get_ai_draft(session: Session, draft_id: str) -> AiProjectDraft | None:
+    try:
+        parsed_id = int(draft_id)
+    except ValueError:
+        return None
+    return session.get(AiProjectDraft, parsed_id)
+
+
+def _ai_draft_context(draft: AiProjectDraft) -> dict:
+    fields = draft_fields(draft)
+    field_values = {
+        key: draft_field_value(draft, key)
+        for key in [
+            "year",
+            "name",
+            "budget_amount",
+            "contract_amount",
+            "contract_start",
+            "contract_end",
+            "notes",
+        ]
+    }
+    fields_by_key = {field["key"]: field for field in fields}
+    review_fields = []
+    for key in [
+        "year",
+        "name",
+        "budget_amount",
+        "contract_amount",
+        "contract_start",
+        "contract_end",
+        "notes",
+    ]:
+        field = fields_by_key.get(key, {})
+        review_fields.append(
+            {
+                "key": key,
+                "label": field.get("label") or key,
+                "value": field_values[key],
+                "source": field.get("source") or "未标注",
+                "evidence": field.get("evidence") or "未提供证据摘录",
+                "confidence": field.get("confidence") or "未标注",
+                "valid": field.get("valid", True),
+                "error": field.get("error", ""),
+            }
+        )
+    return {
+        "draft": draft,
+        "fields": fields,
+        "review_fields": review_fields,
+        "field_values": field_values,
+        "risk_tips": draft_risk_tips(draft),
+        "project_attachment_kinds": PROJECT_ATTACHMENT_KINDS,
+    }
+
+
 def _parse_float(value: str, field_label: str = "金额") -> float | None:
     value = value.strip()
     if not value:
@@ -972,6 +1507,7 @@ def _build_project_url(
 app = create_app(
     database_url=os.getenv("PROJMAN_DATABASE_URL", "sqlite:///data/app.db"),
     data_dir=Path(os.getenv("PROJMAN_DATA_DIR", "data")),
+    env_file=Path(os.getenv("PROJMAN_ENV_FILE", ".env")),
     username=os.getenv("PROJMAN_USERNAME", "admin"),
     password=os.getenv("PROJMAN_PASSWORD", "admin"),
     secret_key=os.getenv("PROJMAN_SECRET_KEY", "projman-local-secret"),

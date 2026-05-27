@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}运维项目管理{% endblock %}</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260526-progress">
   </head>
   <body>
     <header class="topbar">
@@ -12,6 +12,7 @@
       <nav>
         <a href="/projects">项目台账</a>
         <a href="/">年度看板</a>
+        <a href="/ai-projects/new">AI 建档</a>
         <a href="/settings">设置</a>
       </nav>
       <form method="post" action="/logout">
@@ -21,6 +22,6 @@
     <main class="page">
       {% block content %}{% endblock %}
     </main>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260526-progress"></script>
   </body>
 </html>

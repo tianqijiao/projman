@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.domain import AttachmentKind
@@ -65,3 +65,20 @@ class AnnualAttachment(SQLModel, table=True):
 class AppSetting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str
+
+
+class AiProjectDraft(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    status: str = Field(default="pending", index=True)
+    input_kind: str = Field(default="", index=True)
+    input_filename: str = ""
+    input_content_type: str = ""
+    stored_input_path: str = ""
+    input_text_summary: str = Field(default="", sa_column=Column(Text))
+    raw_response_json: str = Field(default="{}", sa_column=Column(Text))
+    fields_json: str = Field(default="[]", sa_column=Column(Text))
+    risk_tips_json: str = Field(default="[]", sa_column=Column(Text))
+    has_validation_errors: bool = Field(default=False, index=True)
+    project_id: int | None = Field(default=None, foreign_key="project.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)

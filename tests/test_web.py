@@ -155,6 +155,104 @@ def test_settings_rejects_non_positive_renewal_days(tmp_path, renewal_days):
     assert 'value="30"' in settings_response.text
 
 
+def test_settings_page_shows_ai_controls_with_plaintext_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROJMAN_AI_ENABLED", "true")
+    monkeypatch.setenv("PROJMAN_AI_API_KEY", "sk-existing-secret")
+    monkeypatch.setenv("PROJMAN_AI_MODEL", "qwen3-vl-plus")
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert "AI 功能设置" in response.text
+    assert 'name="ai_enabled"' in response.text
+    assert "switch-control" in response.text
+    assert 'type="checkbox"' in response.text
+    assert 'name="ai_api_key"' in response.text
+    assert "API Key 已配置" in response.text
+    assert 'name="ai_enabled" type="checkbox" value="on"' in response.text
+    assert "checked" in response.text
+    assert 'value="sk-existing-secret"' in response.text
+
+
+def test_settings_can_enable_ai_and_write_local_env(tmp_path, monkeypatch):
+    for key in [
+        "PROJMAN_AI_ENABLED",
+        "PROJMAN_AI_API_KEY",
+        "PROJMAN_AI_MODEL",
+        "PROJMAN_AI_PROXY",
+        "PROJMAN_AI_MAX_UPLOAD_MB",
+        "PROJMAN_AI_DRAFT_TTL_HOURS",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.post(
+        "/settings",
+        data={
+            "renewal_lead_days": "45",
+            "ai_settings_submitted": "1",
+            "ai_enabled": "on",
+            "ai_api_key": "sk-test-secret",
+            "ai_model": "qwen3-vl-plus",
+            "ai_proxy": "http://127.0.0.1:7890",
+            "ai_max_upload_mb": "12",
+            "ai_draft_ttl_hours": "48",
+        },
+        follow_redirects=False,
+    )
+    settings_response = client.get("/settings")
+    ai_page_response = client.get("/ai-projects/new")
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+
+    assert response.status_code == 303
+    assert "PROJMAN_AI_ENABLED=true" in env_text
+    assert "PROJMAN_AI_API_KEY=sk-test-secret" in env_text
+    assert "PROJMAN_AI_MODEL=qwen3-vl-plus" in env_text
+    assert "PROJMAN_AI_PROXY=http://127.0.0.1:7890" in env_text
+    assert "PROJMAN_AI_MAX_UPLOAD_MB=12" in env_text
+    assert "PROJMAN_AI_DRAFT_TTL_HOURS=48" in env_text
+    assert "AI 已启用" in settings_response.text
+    assert "API Key 已配置" in settings_response.text
+    assert 'value="sk-test-secret"' in settings_response.text
+    assert "AI 功能未启用" not in ai_page_response.text
+
+
+def test_settings_keeps_process_api_key_when_enabled_form_leaves_key_blank(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("PROJMAN_AI_ENABLED", "true")
+    monkeypatch.setenv("PROJMAN_AI_API_KEY", "sk-process-secret")
+    client = make_client(tmp_path)
+    login(client)
+
+    response = client.post(
+        "/settings",
+        data={
+            "renewal_lead_days": "45",
+            "ai_settings_submitted": "1",
+            "ai_enabled": "on",
+            "ai_api_key": "",
+            "ai_model": "qwen3-vl-plus",
+            "ai_proxy": "",
+            "ai_max_upload_mb": "10",
+            "ai_draft_ttl_hours": "24",
+        },
+        follow_redirects=False,
+    )
+    settings_response = client.get("/settings")
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+
+    assert response.status_code == 303
+    assert "PROJMAN_AI_ENABLED=true" in env_text
+    assert "PROJMAN_AI_API_KEY=sk-process-secret" in env_text
+    assert "AI 已启用" in settings_response.text
+    assert 'value="sk-process-secret"' in settings_response.text
+
+
 def test_project_list_is_first_navigation_item(tmp_path):
     client = make_client(tmp_path)
     login(client)
@@ -1064,7 +1162,8 @@ def test_project_detail_save_forms_preserve_scroll_position(tmp_path):
     base_response = client.get("/projects/1")
     detail_response = client.get("/projects/1")
 
-    assert 'src="/static/app.js"' in base_response.text
+    assert 'src="/static/app.js?v=' in base_response.text
+    assert 'href="/static/styles.css?v=' in base_response.text
     assert detail_response.text.count("data-preserve-scroll") == 5
     assert 'action="/projects/1/edit" class="form-grid" data-preserve-scroll' in detail_response.text
     assert (

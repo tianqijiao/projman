@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}项目草稿确认{% endblock %}
+
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>项目草稿确认</h1>
+    <p class="muted">请核对 AI 识别结果。确认创建项目后，系统才会写入正式台账。</p>
+  </div>
+  <a class="button ghost" href="/ai-projects/new">重新识别</a>
+</section>
+
+{% if draft.has_validation_errors %}
+  <section class="notice warning">不可确认：存在需人工修正字段。请修正表单后再提交。</section>
+{% endif %}
+
+{% if risk_tips %}
+  <section class="notice">
+    {% for tip in risk_tips %}
+      <div>{{ tip }}</div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+<section class="panel ai-evidence-table">
+  <form class="stacked-form" method="post" action="/ai-projects/drafts/{{ draft.id }}/confirm">
+    <div class="panel-head">
+      <div>
+        <h2>字段来源与置信度</h2>
+        <p class="muted">建议值可直接修改；确认创建项目时，以本列最终填写内容为准。</p>
+      </div>
+    </div>
+    <table class="ai-editable-table">
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>建议值</th>
+          <th>来源</th>
+          <th>证据</th>
+          <th>置信度</th>
+          <th>校验</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for field in review_fields %}
+          <tr{% if not field.valid %} class="needs-fix"{% endif %}>
+            <td>{{ field.label }}</td>
+            <td class="ai-edit-cell">
+              {% if field.key == "notes" %}
+                <textarea name="notes" rows="3">{{ field.value }}</textarea>
+              {% elif field.key in ["budget_amount", "contract_amount"] %}
+                <input type="number" step="0.01" name="{{ field.key }}" value="{{ field.value }}">
+              {% elif field.key in ["contract_start", "contract_end"] %}
+                <input type="date" name="{{ field.key }}" value="{{ field.value }}">
+              {% elif field.key == "year" %}
+                <input type="number" name="year" value="{{ field.value }}">
+              {% else %}
+                <input type="text" name="{{ field.key }}" value="{{ field.value }}">
+              {% endif %}
+            </td>
+            <td>{{ field.source }}</td>
+            <td>{{ field.evidence }}</td>
+            <td><span class="confidence-tag">{{ field.confidence }}</span></td>
+            <td>
+              {% if field.valid %}
+                <span class="field-check ok">可确认</span>
+              {% else %}
+                <span class="field-check warn">需人工修正：{{ field.error }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="ai-draft-actions">
+      {% if draft.input_filename and draft.input_filename.lower().endswith(".pdf") %}
+        <label>
+          <span>将原 PDF 归档为正式附件</span>
+          <select name="archive_pdf_kind">
+            <option value="">不归档</option>
+            {% for kind in project_attachment_kinds %}
+              <option value="{{ kind.value }}">{{ kind.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% else %}
+        <input type="hidden" name="archive_pdf_kind" value="">
+      {% endif %}
+      <button type="submit">确认创建项目</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel compact-panel">
+  <form method="post" action="/ai-projects/drafts/{{ draft.id }}/abandon">
+    <button class="danger" type="submit">放弃草稿</button>
+  </form>
+</section>
+{% endblock %}
